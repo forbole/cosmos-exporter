@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/maiquanghiep/cosmos-exporter/collector"
+	"github.com/forbole/cosmos-exporter/collector"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"

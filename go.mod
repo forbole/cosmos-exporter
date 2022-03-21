@@ -1,4 +1,4 @@
-module github.com/maiquanghiep/cosmos-exporter
+module github.com/forbole/cosmos-exporter
 
 go 1.17
 
@@ -101,4 +101,4 @@ require (
 
 replace github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 
-replace github.com/maiquanghiep/cosmos-exporter/collector => /home/forbole/cosmos-exporter/collector
+replace github.com/forbole/cosmos-exporter/collector => /home/forbole/cosmos-exporter/collector
