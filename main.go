@@ -27,7 +27,8 @@ const (
 	flagPort             = "port"
 	flagValidatorAddress = "validator_address"
 	flagExponent         = "exponent"
-	flagDenom            = "denom"
+	flagBaseDenom        = "base_denom"
+	flagDisplayDenom     = "display_denom"
 	flagRewardAddress    = "reward_address"
 )
 
@@ -46,8 +47,9 @@ func NewRootCommand() *cobra.Command {
 		RunE:  Executor,
 	}
 
-	cmd.Flags().Uint(flagExponent, 6, "Exponent")
-	cmd.Flags().String(flagDenom, "dsm", "denom_units")
+	cmd.Flags().Uint32(flagExponent, 0, "Exponent")
+	cmd.Flags().String(flagBaseDenom, "", "base denom unit")
+	cmd.Flags().String(flagDisplayDenom, "", "display denom unit")
 	cmd.Flags().String(flagGRPC, "localhost:9090", "GRPC listen address. Port required")
 	cmd.Flags().String(flagRPC, "http://localhost:26657", "RPC listen address. Port required")
 	cmd.Flags().Bool(flagSecure, false, "Activate secure connections")
@@ -58,8 +60,9 @@ func NewRootCommand() *cobra.Command {
 }
 
 func Executor(cmd *cobra.Command, args []string) error {
-	// denom, _ := cmd.Flags().GetString(flagDenom)
-	// exponent, _ := cmd.Flags().GetUint(flagExponent)
+	baseDenom, _ := cmd.Flags().GetString(flagBaseDenom)
+	displayDenom, _ := cmd.Flags().GetString(flagDisplayDenom)
+	exponent, _ := cmd.Flags().GetUint32(flagExponent)
 	gRPC, _ := cmd.Flags().GetString(flagGRPC)
 	rpc, _ := cmd.Flags().GetString(flagRPC)
 	rewardAddress, _ := cmd.Flags().GetString(flagRewardAddress)
@@ -77,7 +80,8 @@ func Executor(cmd *cobra.Command, args []string) error {
 
 	chainID := getChainID(rpc)
 	denomsMetadata := make(map[string]types.DenomMetadata)
-	addCoinMetadata(grpcConn, denomsMetadata)
+	addDenomsMetadata(grpcConn, denomsMetadata)
+	addCustomDenomMetadata(baseDenom, displayDenom, exponent, denomsMetadata)
 	defaultMintDenom := getMintDenom(grpcConn)
 	defaultBondDenom := getBondDenom(grpcConn)
 
@@ -118,8 +122,7 @@ func getChainID(rpc string) string {
 }
 
 // Find Denom metadata to convert to human-readable unit (eg. udsm -> dsm)
-func addCoinMetadata(grpcConn *grpc.ClientConn, denomsMetadata map[string]types.DenomMetadata) {
-
+func addDenomsMetadata(grpcConn *grpc.ClientConn, denomsMetadata map[string]types.DenomMetadata) {
 	bankClient := banktypes.NewQueryClient(grpcConn)
 	denomsRes, err := bankClient.DenomsMetadata(
 		context.Background(),
@@ -140,6 +143,16 @@ func addCoinMetadata(grpcConn *grpc.ClientConn, denomsMetadata map[string]types.
 			denoms[denom.Denom] = denom
 		}
 		denomsMetadata[metadata.Base] = types.NewDenomMetadata(metadata.Base, metadata.Display, denoms)
+	}
+}
+
+// In some chains, DenomsMetadata request return empty so needs to add manually
+func addCustomDenomMetadata(baseDenom string, displayDenom string, exponent uint32, denomsMetadata map[string]types.DenomMetadata) {
+	if baseDenom != "" && displayDenom != "" && exponent > 0 {
+		denoms := make(map[string]types.DenomUnit)
+		denomUnit := types.NewDenomUnit(displayDenom, exponent)
+		denoms[displayDenom] = denomUnit
+		denomsMetadata[baseDenom] = types.NewDenomMetadata(baseDenom, displayDenom, denoms)
 	}
 }
 
