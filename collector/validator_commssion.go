@@ -6,56 +6,62 @@ import (
 	"strconv"
 
 	distributiontypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	types "github.com/forbole/cosmos-exporter/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 )
 
 type ValidatorCommissionGauge struct {
-	chainID          string
-	denom            string
-	desc             *prometheus.Desc
-	exponent         uint
-	grpcConn         *grpc.ClientConn
-	validatorAddress string
+	ChainID          string
+	Desc             *prometheus.Desc
+	DenomMetadata    map[string]types.DenomMetadata
+	GrpcConn         *grpc.ClientConn
+	ValidatorAddress string
 }
 
-func NewValidatorCommissionGauge(grpcConn *grpc.ClientConn, validatorAddress string, chainID string, denom string, exponent uint) *ValidatorCommissionGauge {
+func NewValidatorCommissionGauge(grpcConn *grpc.ClientConn, validatorAddress string, chainID string, denomMetadata map[string]types.DenomMetadata) *ValidatorCommissionGauge {
 	return &ValidatorCommissionGauge{
-		chainID: chainID,
-		denom:   denom,
-		desc: prometheus.NewDesc(
-			"validator_commission",
+		ChainID: chainID,
+		Desc: prometheus.NewDesc(
+			"validator_commission_rate",
 			"Commission of the validator",
 			[]string{"validator_address", "chain_id", "denom"},
 			nil,
 		),
-		exponent:         exponent,
-		grpcConn:         grpcConn,
-		validatorAddress: validatorAddress,
+		DenomMetadata:    denomMetadata,
+		GrpcConn:         grpcConn,
+		ValidatorAddress: validatorAddress,
 	}
 }
 
 func (collector *ValidatorCommissionGauge) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.desc
+	ch <- collector.Desc
 }
 
 func (collector *ValidatorCommissionGauge) Collect(ch chan<- prometheus.Metric) {
-	distributionClient := distributiontypes.NewQueryClient(collector.grpcConn)
+	distributionClient := distributiontypes.NewQueryClient(collector.GrpcConn)
 	distributionRes, err := distributionClient.ValidatorCommission(
 		context.Background(),
-		&distributiontypes.QueryValidatorCommissionRequest{ValidatorAddress: collector.validatorAddress},
+		&distributiontypes.QueryValidatorCommissionRequest{ValidatorAddress: collector.ValidatorAddress},
 	)
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(collector.desc, err)
+		ch <- prometheus.NewInvalidMetric(collector.Desc, err)
 		return
 	}
 
 	for _, commission := range distributionRes.Commission.Commission {
 		if value, err := strconv.ParseFloat(commission.Amount.String(), 64); err != nil {
-			// TODO LOGGING
+			ch <- prometheus.NewInvalidMetric(collector.Desc, err)
 		} else {
-			displayValue := value / math.Pow10(int(collector.exponent))
-			ch <- prometheus.MustNewConstMetric(collector.desc, prometheus.GaugeValue, displayValue, collector.validatorAddress, collector.chainID, collector.denom)
+			baseDenom, found := collector.DenomMetadata[commission.Denom]
+			if !found {
+				ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
+				return
+			}
+			displayDenom := baseDenom.Denoms[baseDenom.Display]
+			commissionFromBaseToDisplay := value / math.Pow10(int(displayDenom.Exponent))
+
+			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, commissionFromBaseToDisplay, collector.ValidatorAddress, collector.ChainID, displayDenom.Denom)
 		}
 	}
 

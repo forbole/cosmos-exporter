@@ -9,18 +9,18 @@ import (
 )
 
 type ValidatorDelegationGauge struct {
-	chainID          string
-	desc             *prometheus.Desc
-	grpcConn         *grpc.ClientConn
-	validatorAddress string
+	ChainID          string
+	Desc             *prometheus.Desc
+	GrpcConn         *grpc.ClientConn
+	ValidatorAddress string
 }
 
 func NewValidatorDelegationGauge(grpcConn *grpc.ClientConn, validatorAddress string, chainID string) *ValidatorDelegationGauge {
 	return &ValidatorDelegationGauge{
-		grpcConn:         grpcConn,
-		validatorAddress: validatorAddress,
-		chainID:          chainID,
-		desc: prometheus.NewDesc(
+		GrpcConn:         grpcConn,
+		ValidatorAddress: validatorAddress,
+		ChainID:          chainID,
+		Desc: prometheus.NewDesc(
 			"validator_delegation_count",
 			"Number of delegations to the validator",
 			[]string{"validator_address", "chain_id"},
@@ -30,21 +30,21 @@ func NewValidatorDelegationGauge(grpcConn *grpc.ClientConn, validatorAddress str
 }
 
 func (collector *ValidatorDelegationGauge) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.desc
+	ch <- collector.Desc
 }
 
 func (collector *ValidatorDelegationGauge) Collect(ch chan<- prometheus.Metric) {
-	stakingClient := stakingtypes.NewQueryClient(collector.grpcConn)
+	stakingClient := stakingtypes.NewQueryClient(collector.GrpcConn)
 	stakingRes, err := stakingClient.ValidatorDelegations(
 		context.Background(),
-		&stakingtypes.QueryValidatorDelegationsRequest{ValidatorAddr: collector.validatorAddress},
+		&stakingtypes.QueryValidatorDelegationsRequest{ValidatorAddr: collector.ValidatorAddress},
 	)
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(collector.desc, err)
+		ch <- prometheus.NewInvalidMetric(collector.Desc, err)
 		return
 	}
 
 	delegationsCount := float64(len(stakingRes.DelegationResponses))
 
-	ch <- prometheus.MustNewConstMetric(collector.desc, prometheus.GaugeValue, delegationsCount, collector.validatorAddress, collector.chainID)
+	ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, delegationsCount, collector.ValidatorAddress, collector.ChainID)
 }

@@ -6,65 +6,66 @@ import (
 	"strconv"
 
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	types "github.com/forbole/cosmos-exporter/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 )
 
 type ValidatorStatus struct {
-	chainID          string
-	denom            string
-	exponent         uint
-	jailDesc         *prometheus.Desc
-	rateDesc         *prometheus.Desc
-	votingDesc       *prometheus.Desc
-	grpcConn         *grpc.ClientConn
-	validatorAddress string
+	ChainID          string
+	DenomMetadata    map[string]types.DenomMetadata
+	DefaultBondDenom string
+	JailDesc         *prometheus.Desc
+	RateDesc         *prometheus.Desc
+	VotingDesc       *prometheus.Desc
+	GrpcConn         *grpc.ClientConn
+	ValidatorAddress string
 }
 
-func NewValidatorStatus(grpcConn *grpc.ClientConn, validatorAddress string, chainID string, denom string, exponent uint) *ValidatorStatus {
+func NewValidatorStatus(grpcConn *grpc.ClientConn, validatorAddress string, chainID string, denomMetadata map[string]types.DenomMetadata, defaultBondDenom string) *ValidatorStatus {
 	return &ValidatorStatus{
-		grpcConn:         grpcConn,
-		validatorAddress: validatorAddress,
-		chainID:          chainID,
-		denom:            denom,
-		exponent:         exponent,
-		jailDesc: prometheus.NewDesc(
+		GrpcConn:         grpcConn,
+		ValidatorAddress: validatorAddress,
+		ChainID:          chainID,
+		DenomMetadata:    denomMetadata,
+		DefaultBondDenom: defaultBondDenom,
+		JailDesc: prometheus.NewDesc(
 			"validator_jailed",
 			"Return 1 if the validator is jailed",
 			[]string{"validator_address", "chain_id"},
 			nil,
 		),
-		rateDesc: prometheus.NewDesc(
+		RateDesc: prometheus.NewDesc(
 			"validator_rate",
 			"Commission rate of the validator",
 			[]string{"validator_address", "chain_id"},
 			nil,
 		),
-		votingDesc: prometheus.NewDesc(
+		VotingDesc: prometheus.NewDesc(
 			"validator_voting_power",
 			"Voting power of the validator",
-			[]string{"validator_address", "chain_id"},
+			[]string{"validator_address", "chain_id", "denom"},
 			nil,
 		),
 	}
 }
 
 func (collector *ValidatorStatus) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.jailDesc
-	ch <- collector.rateDesc
-	ch <- collector.votingDesc
+	ch <- collector.JailDesc
+	ch <- collector.RateDesc
+	ch <- collector.VotingDesc
 }
 
 func (collector *ValidatorStatus) Collect(ch chan<- prometheus.Metric) {
-	stakingClient := stakingtypes.NewQueryClient(collector.grpcConn)
+	stakingClient := stakingtypes.NewQueryClient(collector.GrpcConn)
 	validator, err := stakingClient.Validator(
 		context.Background(),
-		&stakingtypes.QueryValidatorRequest{ValidatorAddr: collector.validatorAddress},
+		&stakingtypes.QueryValidatorRequest{ValidatorAddr: collector.ValidatorAddress},
 	)
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(collector.jailDesc, err)
-		ch <- prometheus.NewInvalidMetric(collector.rateDesc, err)
-		ch <- prometheus.NewInvalidMetric(collector.votingDesc, err)
+		ch <- prometheus.NewInvalidMetric(collector.JailDesc, err)
+		ch <- prometheus.NewInvalidMetric(collector.RateDesc, err)
+		ch <- prometheus.NewInvalidMetric(collector.VotingDesc, err)
 		return
 	}
 
@@ -75,23 +76,30 @@ func (collector *ValidatorStatus) Collect(ch chan<- prometheus.Metric) {
 	} else {
 		jailed = 0
 	}
-	ch <- prometheus.MustNewConstMetric(collector.jailDesc, prometheus.GaugeValue, jailed, collector.validatorAddress, collector.chainID)
+	ch <- prometheus.MustNewConstMetric(collector.JailDesc, prometheus.GaugeValue, jailed, collector.ValidatorAddress, collector.ChainID)
 
 	// Rate handle
 
 	if rate, err := strconv.ParseFloat(validator.Validator.Commission.CommissionRates.Rate.String(), 64); err != nil {
-		// LOG
+		ch <- prometheus.NewInvalidMetric(collector.RateDesc, err)
 	} else {
-		ch <- prometheus.MustNewConstMetric(collector.rateDesc, prometheus.GaugeValue, rate, collector.validatorAddress, collector.chainID)
+		ch <- prometheus.MustNewConstMetric(collector.RateDesc, prometheus.GaugeValue, rate, collector.ValidatorAddress, collector.ChainID)
 	}
 
-	// Share handle
+	// Voting power handle
 
 	if value, err := strconv.ParseFloat(validator.Validator.DelegatorShares.String(), 64); err != nil {
-		// LOG
+		ch <- prometheus.NewInvalidMetric(collector.VotingDesc, err)
 	} else {
-		displayValue := value / math.Pow10(int(collector.exponent))
-		ch <- prometheus.MustNewConstMetric(collector.votingDesc, prometheus.GaugeValue, displayValue, collector.validatorAddress, collector.chainID)
+		baseDenom, found := collector.DenomMetadata[collector.DefaultBondDenom]
+		if !found {
+			ch <- prometheus.NewInvalidMetric(collector.VotingDesc, &types.DenomNotFound{})
+			return
+		}
+		displayDenom := baseDenom.Denoms[baseDenom.Display]
+		fromBaseToDisplay := value / math.Pow10(int(displayDenom.Exponent))
+
+		ch <- prometheus.MustNewConstMetric(collector.VotingDesc, prometheus.GaugeValue, fromBaseToDisplay, collector.ValidatorAddress, collector.ChainID, displayDenom.Denom)
 	}
 
 }

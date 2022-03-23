@@ -7,7 +7,12 @@ import (
 	"net/http"
 	"os"
 
+	querytypes "github.com/cosmos/cosmos-sdk/types/query"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/forbole/cosmos-exporter/collector"
+	types "github.com/forbole/cosmos-exporter/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
@@ -53,8 +58,8 @@ func NewRootCommand() *cobra.Command {
 }
 
 func Executor(cmd *cobra.Command, args []string) error {
-	denom, _ := cmd.Flags().GetString(flagDenom)
-	exponent, _ := cmd.Flags().GetUint(flagExponent)
+	// denom, _ := cmd.Flags().GetString(flagDenom)
+	// exponent, _ := cmd.Flags().GetUint(flagExponent)
 	gRPC, _ := cmd.Flags().GetString(flagGRPC)
 	rpc, _ := cmd.Flags().GetString(flagRPC)
 	rewardAddress, _ := cmd.Flags().GetString(flagRewardAddress)
@@ -71,14 +76,18 @@ func Executor(cmd *cobra.Command, args []string) error {
 	defer grpcConn.Close()
 
 	chainID := getChainID(rpc)
+	denomsMetadata := make(map[string]types.DenomMetadata)
+	addCoinMetadata(grpcConn, denomsMetadata)
+	defaultMintDenom := getMintDenom(grpcConn)
+	defaultBondDenom := getBondDenom(grpcConn)
 
 	registry := prometheus.NewPedanticRegistry()
 	registry.MustRegister(
-		collector.NewRewardGauge(grpcConn, rewardAddress, chainID, denom, exponent),
-		collector.NewValidatorCommissionGauge(grpcConn, validatorAddress, chainID, denom, exponent),
+		collector.NewRewardGauge(grpcConn, rewardAddress, chainID, denomsMetadata, defaultMintDenom),
+		collector.NewValidatorCommissionGauge(grpcConn, validatorAddress, chainID, denomsMetadata),
 		collector.NewValidatorDelegationGauge(grpcConn, validatorAddress, chainID),
-		collector.NewValidatorStatus(grpcConn, validatorAddress, chainID, denom, exponent),
-		collector.NewValidatorsStatus(grpcConn, chainID, denom, exponent),
+		collector.NewValidatorStatus(grpcConn, validatorAddress, chainID, denomsMetadata, defaultBondDenom),
+		collector.NewValidatorsStatus(grpcConn, validatorAddress, chainID, denomsMetadata, defaultBondDenom),
 	)
 
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{
@@ -93,6 +102,7 @@ func Executor(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// Find Chain id to add as metrics lable
 func getChainID(rpc string) string {
 	client, err := tmrpc.New(rpc, "/websocket")
 	if err != nil {
@@ -105,4 +115,56 @@ func getChainID(rpc string) string {
 	}
 
 	return status.NodeInfo.Network
+}
+
+// Find Denom metadata to convert to human-readable unit (eg. udsm -> dsm)
+func addCoinMetadata(grpcConn *grpc.ClientConn, denomsMetadata map[string]types.DenomMetadata) {
+
+	bankClient := banktypes.NewQueryClient(grpcConn)
+	denomsRes, err := bankClient.DenomsMetadata(
+		context.Background(),
+		&banktypes.QueryDenomsMetadataRequest{
+			Pagination: &querytypes.PageRequest{
+				Limit: 1000,
+			},
+		},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, metadata := range denomsRes.Metadatas {
+		denoms := make(map[string]types.DenomUnit)
+		for _, denom := range metadata.DenomUnits {
+			denom := types.NewDenomUnit(denom.Denom, denom.Exponent)
+			denoms[denom.Denom] = denom
+		}
+		denomsMetadata[metadata.Base] = types.NewDenomMetadata(metadata.Base, metadata.Display, denoms)
+	}
+}
+
+func getMintDenom(grpcConn *grpc.ClientConn) string {
+	mintClient := minttypes.NewQueryClient(grpcConn)
+	mintParamsRes, err := mintClient.Params(
+		context.Background(),
+		&minttypes.QueryParamsRequest{},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	return mintParamsRes.Params.MintDenom
+}
+
+func getBondDenom(grpcConn *grpc.ClientConn) string {
+	stakingClient := stakingtypes.NewQueryClient(grpcConn)
+	stakingParamsRes, err := stakingClient.Params(
+		context.Background(),
+		&stakingtypes.QueryParamsRequest{},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	return stakingParamsRes.Params.BondDenom
 }

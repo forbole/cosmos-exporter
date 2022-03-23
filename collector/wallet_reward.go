@@ -6,59 +6,72 @@ import (
 	"strconv"
 
 	distributiontypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	types "github.com/forbole/cosmos-exporter/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 )
 
 type RewardGauge struct {
-	chainID       string
-	denom         string
-	desc          *prometheus.Desc
-	exponent      uint
-	grpcConn      *grpc.ClientConn
-	rewardAddress string
+	ChainID          string
+	Desc             *prometheus.Desc
+	DenomMetadata    map[string]types.DenomMetadata
+	DefaultMintDenom string
+	GrpcConn         *grpc.ClientConn
+	RewardAddress    string
 }
 
-func NewRewardGauge(grpcConn *grpc.ClientConn, rewardAddress string, chainID string, denom string, exponent uint) *RewardGauge {
+func NewRewardGauge(grpcConn *grpc.ClientConn, rewardAddress string, chainID string, denomMetadata map[string]types.DenomMetadata, defaultMintDenom string) *RewardGauge {
 	return &RewardGauge{
-		chainID: chainID,
-		denom:   denom,
-		desc: prometheus.NewDesc(
+		ChainID: chainID,
+		Desc: prometheus.NewDesc(
 			"reward_balance",
 			"Rewards of the address",
 			[]string{"address", "validator_address", "chain_id", "denom"},
 			nil,
 		),
-		exponent:      exponent,
-		grpcConn:      grpcConn,
-		rewardAddress: rewardAddress,
+		DenomMetadata:    denomMetadata,
+		DefaultMintDenom: defaultMintDenom,
+		GrpcConn:         grpcConn,
+		RewardAddress:    rewardAddress,
 	}
 }
 
 func (collector *RewardGauge) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.desc
+	ch <- collector.Desc
 }
 
 func (collector *RewardGauge) Collect(ch chan<- prometheus.Metric) {
-	distributionClient := distributiontypes.NewQueryClient(collector.grpcConn)
+	distributionClient := distributiontypes.NewQueryClient(collector.GrpcConn)
 	distributionRes, err := distributionClient.DelegationTotalRewards(
 		context.Background(),
-		&distributiontypes.QueryDelegationTotalRewardsRequest{DelegatorAddress: collector.rewardAddress},
+		&distributiontypes.QueryDelegationTotalRewardsRequest{DelegatorAddress: collector.RewardAddress},
 	)
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(collector.desc, err)
+		ch <- prometheus.NewInvalidMetric(collector.Desc, err)
 		return
 	}
 
 	for _, reward := range distributionRes.Rewards {
-		for _, entry := range reward.Reward {
-			if value, err := strconv.ParseFloat(entry.Amount.String(), 64); err != nil {
-				// TODO LOGGING
-			} else {
-				displayValue := value / math.Pow10(int(collector.exponent))
-				ch <- prometheus.MustNewConstMetric(collector.desc, prometheus.GaugeValue, displayValue, collector.rewardAddress, reward.ValidatorAddress, collector.chainID, collector.denom)
+		baseDenom, found := collector.DenomMetadata[collector.DefaultMintDenom]
+		if !found {
+			ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
+			return
+		}
+		displayDenom := baseDenom.Denoms[baseDenom.Display]
+
+		if len(reward.Reward) == 0 {
+			rewardfromBaseToDisplay := float64(0)
+			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.RewardAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
+		} else {
+			for _, entry := range reward.Reward {
+				var rewardfromBaseToDisplay float64
+				if value, err := strconv.ParseFloat(entry.Amount.String(), 64); err != nil {
+					rewardfromBaseToDisplay = 0
+				} else {
+					rewardfromBaseToDisplay = value / math.Pow10(int(displayDenom.Exponent))
+				}
+				ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.RewardAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
 			}
 		}
 	}
-
 }
