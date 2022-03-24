@@ -70,11 +70,15 @@ func (collector *ValidatorsStatus) Collect(ch chan<- prometheus.Metric) {
 
 	// Sort to get validator ranking.
 	sort.Slice(validators, func(i, j int) bool {
-		return validators[i].DelegatorShares.RoundInt64() > validators[j].DelegatorShares.RoundInt64()
+		return validators[i].DelegatorShares.GT(validators[j].DelegatorShares)
 	})
 
 	for index, validator := range validators {
-		totalVotingPower += float64(validator.DelegatorShares.RoundInt64())
+		votingPower, err := validator.DelegatorShares.Float64()
+		if err != nil {
+			panic(err)
+		}
+		totalVotingPower += votingPower
 		if validator.OperatorAddress == collector.ValidatorAddress {
 			validatorRanking = index + 1
 		}
