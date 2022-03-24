@@ -32,7 +32,7 @@ const (
 	flagExponent         = "exponent"
 	flagBaseDenom        = "base_denom"
 	flagDisplayDenom     = "display_denom"
-	flagRewardAddress    = "reward_address"
+	flagDelegatorAddress = "delegator_address"
 )
 
 var (
@@ -62,7 +62,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.Flags().Bool(flagSecure, false, "Activate secure connections")
 	cmd.Flags().String(flagPort, ":26661", "Port to be used to expose the service")
 	cmd.Flags().String(flagValidatorAddress, "", "Validator address")
-	cmd.Flags().String(flagRewardAddress, "", "Reward address")
+	cmd.Flags().String(flagDelegatorAddress, "", "Delegator address")
 	return cmd
 }
 
@@ -72,7 +72,7 @@ func Executor(cmd *cobra.Command, args []string) error {
 	exponent, _ := cmd.Flags().GetUint32(flagExponent)
 	gRPC, _ := cmd.Flags().GetString(flagGRPC)
 	rpc, _ := cmd.Flags().GetString(flagRPC)
-	rewardAddress, _ := cmd.Flags().GetString(flagRewardAddress)
+	delegatorAddress, _ := cmd.Flags().GetString(flagDelegatorAddress)
 	port, _ := cmd.Flags().GetString(flagPort)
 	validatorAddress, _ := cmd.Flags().GetString(flagValidatorAddress)
 	secure, _ := cmd.Flags().GetBool(flagSecure)
@@ -101,7 +101,8 @@ func Executor(cmd *cobra.Command, args []string) error {
 
 	registry := prometheus.NewPedanticRegistry()
 	registry.MustRegister(
-		collector.NewRewardGauge(grpcConn, rewardAddress, chainID, denomsMetadata, defaultMintDenom),
+		collector.NewDelegatorRewardGauge(grpcConn, delegatorAddress, chainID, denomsMetadata, defaultMintDenom),
+		collector.NewDelegatorStakeGauge(grpcConn, delegatorAddress, chainID, denomsMetadata, defaultBondDenom),
 		collector.NewValidatorCommissionGauge(grpcConn, validatorAddress, chainID, denomsMetadata),
 		collector.NewValidatorDelegationGauge(grpcConn, validatorAddress, chainID),
 		collector.NewValidatorStatus(grpcConn, validatorAddress, chainID, denomsMetadata, defaultBondDenom),

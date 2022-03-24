@@ -11,40 +11,40 @@ import (
 	"google.golang.org/grpc"
 )
 
-type RewardGauge struct {
+type DelegatorRewardGauge struct {
 	ChainID          string
 	Desc             *prometheus.Desc
 	DenomMetadata    map[string]types.DenomMetadata
 	DefaultMintDenom string
 	GrpcConn         *grpc.ClientConn
-	RewardAddress    string
+	DelegatorAddress string
 }
 
-func NewRewardGauge(grpcConn *grpc.ClientConn, rewardAddress string, chainID string, denomMetadata map[string]types.DenomMetadata, defaultMintDenom string) *RewardGauge {
-	return &RewardGauge{
+func NewDelegatorRewardGauge(grpcConn *grpc.ClientConn, delegatorAddress string, chainID string, denomMetadata map[string]types.DenomMetadata, defaultMintDenom string) *DelegatorRewardGauge {
+	return &DelegatorRewardGauge{
 		ChainID: chainID,
 		Desc: prometheus.NewDesc(
-			"reward_balance",
-			"Rewards of the address",
-			[]string{"address", "validator_address", "chain_id", "denom"},
+			"reward_amount",
+			"Rewards of the delegator address from validator",
+			[]string{"delegator_address", "validator_address", "chain_id", "denom"},
 			nil,
 		),
 		DenomMetadata:    denomMetadata,
 		DefaultMintDenom: defaultMintDenom,
 		GrpcConn:         grpcConn,
-		RewardAddress:    rewardAddress,
+		DelegatorAddress: delegatorAddress,
 	}
 }
 
-func (collector *RewardGauge) Describe(ch chan<- *prometheus.Desc) {
+func (collector *DelegatorRewardGauge) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.Desc
 }
 
-func (collector *RewardGauge) Collect(ch chan<- prometheus.Metric) {
+func (collector *DelegatorRewardGauge) Collect(ch chan<- prometheus.Metric) {
 	distributionClient := distributiontypes.NewQueryClient(collector.GrpcConn)
 	distributionRes, err := distributionClient.DelegationTotalRewards(
 		context.Background(),
-		&distributiontypes.QueryDelegationTotalRewardsRequest{DelegatorAddress: collector.RewardAddress},
+		&distributiontypes.QueryDelegationTotalRewardsRequest{DelegatorAddress: collector.DelegatorAddress},
 	)
 	if err != nil {
 		ch <- prometheus.NewInvalidMetric(collector.Desc, err)
@@ -61,7 +61,7 @@ func (collector *RewardGauge) Collect(ch chan<- prometheus.Metric) {
 
 		if len(reward.Reward) == 0 {
 			rewardfromBaseToDisplay := float64(0)
-			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.RewardAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
+			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.DelegatorAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
 		} else {
 			for _, entry := range reward.Reward {
 				var rewardfromBaseToDisplay float64
@@ -70,7 +70,7 @@ func (collector *RewardGauge) Collect(ch chan<- prometheus.Metric) {
 				} else {
 					rewardfromBaseToDisplay = value / math.Pow10(int(displayDenom.Exponent))
 				}
-				ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.RewardAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
+				ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.DelegatorAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
 			}
 		}
 	}
