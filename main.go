@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 
 	querytypes "github.com/cosmos/cosmos-sdk/types/query"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -18,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	tmrpc "github.com/tendermint/tendermint/rpc/client/http"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
@@ -30,6 +33,10 @@ const (
 	flagBaseDenom        = "base_denom"
 	flagDisplayDenom     = "display_denom"
 	flagRewardAddress    = "reward_address"
+)
+
+var (
+	HTTPProtocols = regexp.MustCompile("https?://")
 )
 
 func main() {
@@ -68,11 +75,18 @@ func Executor(cmd *cobra.Command, args []string) error {
 	rewardAddress, _ := cmd.Flags().GetString(flagRewardAddress)
 	port, _ := cmd.Flags().GetString(flagPort)
 	validatorAddress, _ := cmd.Flags().GetString(flagValidatorAddress)
+	secure, _ := cmd.Flags().GetBool(flagSecure)
 
-	grpcConn, err := grpc.Dial(
-		gRPC,
-		grpc.WithInsecure(),
-	)
+	var grpcOpts []grpc.DialOption
+
+	if secure {
+		grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
+	} else {
+		grpcOpts = append(grpcOpts, grpc.WithInsecure())
+	}
+
+	address := HTTPProtocols.ReplaceAllString(gRPC, "")
+	grpcConn, err := grpc.Dial(address, grpcOpts...)
 	if err != nil {
 		panic(err)
 	}
