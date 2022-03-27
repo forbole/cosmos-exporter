@@ -36,7 +36,7 @@ func NewValidatorStatus(grpcConn *grpc.ClientConn, validatorAddress string, chai
 			nil,
 		),
 		RateDesc: prometheus.NewDesc(
-			"validator_rate",
+			"validator_commission_rate",
 			"Commission rate of the validator",
 			[]string{"validator_address", "chain_id"},
 			nil,
