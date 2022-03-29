@@ -2,7 +2,9 @@ package collector
 
 import (
 	"context"
+	"math"
 
+	querytypes "github.com/cosmos/cosmos-sdk/types/query"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
@@ -14,6 +16,8 @@ type ValidatorDelegationGauge struct {
 	GrpcConn         *grpc.ClientConn
 	ValidatorAddress string
 }
+
+const MaxLimit = math.MaxUint64
 
 func NewValidatorDelegationGauge(grpcConn *grpc.ClientConn, validatorAddress string, chainID string) *ValidatorDelegationGauge {
 	return &ValidatorDelegationGauge{
@@ -37,7 +41,12 @@ func (collector *ValidatorDelegationGauge) Collect(ch chan<- prometheus.Metric) 
 	stakingClient := stakingtypes.NewQueryClient(collector.GrpcConn)
 	stakingRes, err := stakingClient.ValidatorDelegations(
 		context.Background(),
-		&stakingtypes.QueryValidatorDelegationsRequest{ValidatorAddr: collector.ValidatorAddress},
+		&stakingtypes.QueryValidatorDelegationsRequest{
+			ValidatorAddr: collector.ValidatorAddress,
+			Pagination: &querytypes.PageRequest{
+				Limit: MaxLimit,
+			},
+		},
 	)
 	if err != nil {
 		ch <- prometheus.NewInvalidMetric(collector.Desc, err)
