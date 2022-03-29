@@ -44,7 +44,7 @@ func (collector *ValidatorDelegationGauge) Collect(ch chan<- prometheus.Metric) 
 		&stakingtypes.QueryValidatorDelegationsRequest{
 			ValidatorAddr: collector.ValidatorAddress,
 			Pagination: &querytypes.PageRequest{
-				Limit: MaxLimit,
+				Limit: MaxLimit - 1,
 			},
 		},
 	)
