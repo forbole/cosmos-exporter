@@ -44,7 +44,7 @@ func (collector *ValidatorDelegationGauge) Collect(ch chan<- prometheus.Metric) 
 		&stakingtypes.QueryValidatorDelegationsRequest{
 			ValidatorAddr: collector.ValidatorAddress,
 			Pagination: &querytypes.PageRequest{
-				Limit: MaxLimit - 1,
+				CountTotal: true,
 			},
 		},
 	)
@@ -53,7 +53,7 @@ func (collector *ValidatorDelegationGauge) Collect(ch chan<- prometheus.Metric) 
 		return
 	}
 
-	delegationsCount := float64(len(stakingRes.DelegationResponses))
+	delegationsCount := float64(stakingRes.Pagination.Total)
 
 	ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, delegationsCount, collector.ValidatorAddress, collector.ChainID)
 }

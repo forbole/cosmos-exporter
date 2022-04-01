@@ -55,8 +55,7 @@ func (collector *ValidatorCommissionGauge) Collect(ch chan<- prometheus.Metric) 
 		} else {
 			baseDenom, found := collector.DenomMetadata[commission.Denom]
 			if !found {
-				ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
-				return
+				continue
 			}
 			displayDenom := baseDenom.Denoms[baseDenom.Display]
 			commissionFromBaseToDisplay := value / math.Pow10(int(displayDenom.Exponent))

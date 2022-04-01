@@ -96,8 +96,19 @@ func Executor(cmd *cobra.Command, args []string) error {
 	denomsMetadata := make(map[string]types.DenomMetadata)
 	addDenomsMetadata(grpcConn, denomsMetadata)
 	addCustomDenomMetadata(baseDenom, displayDenom, exponent, denomsMetadata)
-	defaultMintDenom := getMintDenom(grpcConn)
-	defaultBondDenom := getBondDenom(grpcConn)
+
+	var defaultMintDenom string
+	var defaultBondDenom string
+	if denom, err := getMintDenom(grpcConn); err != nil {
+		defaultMintDenom = baseDenom
+	} else {
+		defaultMintDenom = denom
+	}
+	if denom, err := getBondDenom(grpcConn); err != nil {
+		defaultBondDenom = baseDenom
+	} else {
+		defaultBondDenom = denom
+	}
 
 	registry := prometheus.NewPedanticRegistry()
 	registry.MustRegister(
@@ -171,28 +182,29 @@ func addCustomDenomMetadata(baseDenom string, displayDenom string, exponent uint
 	}
 }
 
-func getMintDenom(grpcConn *grpc.ClientConn) string {
+func getMintDenom(grpcConn *grpc.ClientConn) (string, error) {
 	mintClient := minttypes.NewQueryClient(grpcConn)
 	mintParamsRes, err := mintClient.Params(
 		context.Background(),
 		&minttypes.QueryParamsRequest{},
 	)
+
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
-	return mintParamsRes.Params.MintDenom
+	return mintParamsRes.Params.MintDenom, nil
 }
 
-func getBondDenom(grpcConn *grpc.ClientConn) string {
+func getBondDenom(grpcConn *grpc.ClientConn) (string, error) {
 	stakingClient := stakingtypes.NewQueryClient(grpcConn)
 	stakingParamsRes, err := stakingClient.Params(
 		context.Background(),
 		&stakingtypes.QueryParamsRequest{},
 	)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
-	return stakingParamsRes.Params.BondDenom
+	return stakingParamsRes.Params.BondDenom, nil
 }
