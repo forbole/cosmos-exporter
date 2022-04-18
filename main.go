@@ -112,6 +112,7 @@ func Executor(cmd *cobra.Command, args []string) error {
 
 	registry := prometheus.NewPedanticRegistry()
 	registry.MustRegister(
+		collector.NewActiveProposalGauge(grpcConn, delegatorAddress, chainID),
 		collector.NewDelegatorRewardGauge(grpcConn, delegatorAddress, chainID, denomsMetadata, defaultMintDenom),
 		collector.NewDelegatorStakeGauge(grpcConn, delegatorAddress, chainID, denomsMetadata, defaultBondDenom),
 		collector.NewValidatorCommissionGauge(grpcConn, validatorAddress, chainID, denomsMetadata),
