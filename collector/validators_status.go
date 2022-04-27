@@ -89,9 +89,8 @@ func (collector *ValidatorsStatus) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.NewInvalidMetric(collector.TotalVotingDesc, &types.DenomNotFound{})
 		return
 	}
-	displayDenom := baseDenom.Denoms[baseDenom.Display]
-	fromBaseToDisplay := totalVotingPower / math.Pow10(int(displayDenom.Exponent))
+	fromBaseToDisplay := totalVotingPower / math.Pow10(int(baseDenom.Exponent))
 
-	ch <- prometheus.MustNewConstMetric(collector.TotalVotingDesc, prometheus.GaugeValue, fromBaseToDisplay, collector.ChainID, displayDenom.Denom)
+	ch <- prometheus.MustNewConstMetric(collector.TotalVotingDesc, prometheus.GaugeValue, fromBaseToDisplay, collector.ChainID, baseDenom.Display)
 	ch <- prometheus.MustNewConstMetric(collector.ValidatorRanking, prometheus.GaugeValue, float64(validatorRanking), collector.ChainID)
 }

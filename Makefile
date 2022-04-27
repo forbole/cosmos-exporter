@@ -14,7 +14,7 @@ all: lint test-unit install
 
 build: go.sum
 	@echo "building cosmos_exporter binary..."
-	@go build -mod=readonly -o build/cosmos_exporter ./cosmos_exporter.go
+	@go build -mod=readonly -o build/cosmos_exporter ./cmd/cosmos_exporter
 .PHONY: build
 
 ###############################################################################
@@ -23,7 +23,7 @@ build: go.sum
 
 install: go.sum
 	@echo "installing cosmos_exporter binary..."
-	@go install -mod=readonly ./cosmos_exporter.go
+	@go install -mod=readonly ./cmd/cosmos_exporter
 .PHONY: install
 
 ###############################################################################

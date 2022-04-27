@@ -1,27 +1,21 @@
 package types
 
+import "reflect"
+
 type DenomMetadata struct {
-	Base    string
-	Display string
-	Denoms  map[string]DenomUnit
+	Base     string `mapstructure:"base_denom"`
+	Display  string `mapstructure:"display_denom"`
+	Exponent uint32 `mapstructure:"exponent"`
 }
 
-type DenomUnit struct {
-	Denom    string
-	Exponent uint32
-}
-
-func NewDenomUnit(denom string, exponent uint32) DenomUnit {
-	return DenomUnit{
-		Denom:    denom,
+func NewDenomMetadata(base string, display string, exponent uint32) DenomMetadata {
+	return DenomMetadata{
+		Base:     base,
+		Display:  display,
 		Exponent: exponent,
 	}
 }
 
-func NewDenomMetadata(base string, display string, denoms map[string]DenomUnit) DenomMetadata {
-	return DenomMetadata{
-		Base:    base,
-		Display: display,
-		Denoms:  denoms,
-	}
+func (x DenomMetadata) IsStructureEmpty() bool {
+	return reflect.DeepEqual(x, DenomMetadata{})
 }

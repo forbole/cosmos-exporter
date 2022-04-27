@@ -57,14 +57,13 @@ func (collector *DelegatorStakeGauge) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
 			return
 		}
-		displayDenom := baseDenom.Denoms[baseDenom.Display]
 
 		var delegationFromBaseToDisplay float64
 		if value, err := strconv.ParseFloat(delegation.Balance.Amount.String(), 64); err != nil {
 			delegationFromBaseToDisplay = 0
 		} else {
-			delegationFromBaseToDisplay = value / math.Pow10(int(displayDenom.Exponent))
+			delegationFromBaseToDisplay = value / math.Pow10(int(baseDenom.Exponent))
 		}
-		ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, delegationFromBaseToDisplay, collector.DelegatorAddress, delegation.Delegation.ValidatorAddress, collector.ChainID, displayDenom.Denom)
+		ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, delegationFromBaseToDisplay, collector.DelegatorAddress, delegation.Delegation.ValidatorAddress, collector.ChainID, baseDenom.Display)
 	}
 }

@@ -57,10 +57,9 @@ func (collector *ValidatorCommissionGauge) Collect(ch chan<- prometheus.Metric) 
 			if !found {
 				continue
 			}
-			displayDenom := baseDenom.Denoms[baseDenom.Display]
-			commissionFromBaseToDisplay := value / math.Pow10(int(displayDenom.Exponent))
+			commissionFromBaseToDisplay := value / math.Pow10(int(baseDenom.Exponent))
 
-			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, commissionFromBaseToDisplay, collector.ValidatorAddress, collector.ChainID, displayDenom.Denom)
+			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, commissionFromBaseToDisplay, collector.ValidatorAddress, collector.ChainID, baseDenom.Display)
 		}
 	}
 

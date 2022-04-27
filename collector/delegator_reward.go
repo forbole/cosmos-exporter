@@ -57,20 +57,19 @@ func (collector *DelegatorRewardGauge) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
 			return
 		}
-		displayDenom := baseDenom.Denoms[baseDenom.Display]
 
 		if len(reward.Reward) == 0 {
 			rewardfromBaseToDisplay := float64(0)
-			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.DelegatorAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
+			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.DelegatorAddress, reward.ValidatorAddress, collector.ChainID, baseDenom.Display)
 		} else {
 			for _, entry := range reward.Reward {
 				var rewardfromBaseToDisplay float64
 				if value, err := strconv.ParseFloat(entry.Amount.String(), 64); err != nil {
 					rewardfromBaseToDisplay = 0
 				} else {
-					rewardfromBaseToDisplay = value / math.Pow10(int(displayDenom.Exponent))
+					rewardfromBaseToDisplay = value / math.Pow10(int(baseDenom.Exponent))
 				}
-				ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.DelegatorAddress, reward.ValidatorAddress, collector.ChainID, displayDenom.Denom)
+				ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, collector.DelegatorAddress, reward.ValidatorAddress, collector.ChainID, baseDenom.Display)
 			}
 		}
 	}
