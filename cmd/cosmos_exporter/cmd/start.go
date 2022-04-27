@@ -82,6 +82,7 @@ var startCmd = &cobra.Command{
 		registry := prometheus.NewPedanticRegistry()
 		registry.MustRegister(
 			collector.NewActiveProposalGauge(grpcConn, config.DelegatorAddress, chainID),
+			collector.NewAvailableBalanceGauge(grpcConn, config.DelegatorAddress, chainID, denomsMetadata),
 			collector.NewDelegatorRewardGauge(grpcConn, config.DelegatorAddress, chainID, denomsMetadata, defaultMintDenom),
 			collector.NewDelegatorStakeGauge(grpcConn, config.DelegatorAddress, chainID, denomsMetadata, defaultBondDenom),
 			collector.NewValidatorCommissionGauge(grpcConn, config.ValidatorAddress, chainID, denomsMetadata),
