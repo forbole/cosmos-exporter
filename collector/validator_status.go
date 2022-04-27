@@ -30,19 +30,19 @@ func NewValidatorStatus(grpcConn *grpc.ClientConn, validatorAddress string, chai
 		DenomMetadata:    denomMetadata,
 		DefaultBondDenom: defaultBondDenom,
 		JailDesc: prometheus.NewDesc(
-			"validator_jailed",
+			"tendermint_validator_jailed",
 			"Return 1 if the validator is jailed",
 			[]string{"validator_address", "chain_id"},
 			nil,
 		),
 		RateDesc: prometheus.NewDesc(
-			"validator_commission_rate",
+			"tendermint_validator_commission_rate",
 			"Commission rate of the validator",
 			[]string{"validator_address", "chain_id"},
 			nil,
 		),
 		VotingDesc: prometheus.NewDesc(
-			"validator_voting_power",
+			"tendermint_validator_voting_power_total",
 			"Voting power of the validator",
 			[]string{"validator_address", "chain_id", "denom"},
 			nil,

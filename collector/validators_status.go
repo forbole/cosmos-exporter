@@ -29,14 +29,14 @@ func NewValidatorsStatus(grpcConn *grpc.ClientConn, validatorAddress string, cha
 		DefaultBondDenom: defaultBondDenom,
 		GrpcConn:         grpcConn,
 		TotalVotingDesc: prometheus.NewDesc(
-			"total_voting_power",
+			"tendermint_voting_power_total",
 			"Total voting power of validators",
 			[]string{"chain_id", "denom"},
 			nil,
 		),
 		ValidatorAddress: validatorAddress,
 		ValidatorRanking: prometheus.NewDesc(
-			"validator_voting_power_ranking",
+			"tendermint_validator_voting_power_ranking",
 			"Ranking of the validator based on voting power",
 			[]string{"chain_id"},
 			nil,

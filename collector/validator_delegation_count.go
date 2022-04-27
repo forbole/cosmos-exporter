@@ -25,8 +25,8 @@ func NewValidatorDelegationGauge(grpcConn *grpc.ClientConn, validatorAddress str
 		ValidatorAddress: validatorAddress,
 		ChainID:          chainID,
 		Desc: prometheus.NewDesc(
-			"validator_delegation_count",
-			"Number of delegations to the validator",
+			"tendermint_validator_delegators_total",
+			"Number of delegators to the validator",
 			[]string{"validator_address", "chain_id"},
 			nil,
 		),

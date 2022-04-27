@@ -24,7 +24,7 @@ func NewAvailableBalanceGauge(grpcConn *grpc.ClientConn, delegatorAddress string
 	return &AvailableBalanceGauge{
 		ChainID: chainID,
 		Desc: prometheus.NewDesc(
-			"available_balance",
+			"tendermint_available_balance",
 			"Stake amount of delegator address to validator",
 			[]string{"delegator_address", "chain_id", "denom"},
 			nil,

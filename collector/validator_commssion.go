@@ -23,7 +23,7 @@ func NewValidatorCommissionGauge(grpcConn *grpc.ClientConn, validatorAddress str
 	return &ValidatorCommissionGauge{
 		ChainID: chainID,
 		Desc: prometheus.NewDesc(
-			"validator_commission",
+			"tendermint_validator_commission_total",
 			"Commission of the validator",
 			[]string{"validator_address", "chain_id", "denom"},
 			nil,

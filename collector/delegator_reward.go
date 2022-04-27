@@ -24,7 +24,7 @@ func NewDelegatorRewardGauge(grpcConn *grpc.ClientConn, delegatorAddress string,
 	return &DelegatorRewardGauge{
 		ChainID: chainID,
 		Desc: prometheus.NewDesc(
-			"reward_amount",
+			"tendermint_staking_reward_total",
 			"Rewards of the delegator address from validator",
 			[]string{"delegator_address", "validator_address", "chain_id", "denom"},
 			nil,

@@ -24,7 +24,7 @@ func NewDelegatorStakeGauge(grpcConn *grpc.ClientConn, delegatorAddress string, 
 	return &DelegatorStakeGauge{
 		ChainID: chainID,
 		Desc: prometheus.NewDesc(
-			"stake_amount",
+			"tendermint_staking_total",
 			"Stake amount of delegator address to validator",
 			[]string{"delegator_address", "validator_address", "chain_id", "denom"},
 			nil,
