@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"sync"
 
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,16 +11,16 @@ import (
 
 type ActiveProposalGauge struct {
 	ChainID                  string
-	DelegatorAddress         string
+	DelegatorAddresses       []string
 	ActiveProposalsDesc      *prometheus.Desc
 	VotedActiveProposalsDesc *prometheus.Desc
 	GrpcConn                 *grpc.ClientConn
 }
 
-func NewActiveProposalGauge(grpcConn *grpc.ClientConn, delegatorAddress string, chainID string) *ActiveProposalGauge {
+func NewActiveProposalGauge(grpcConn *grpc.ClientConn, delegatorAddresses []string, chainID string) *ActiveProposalGauge {
 	return &ActiveProposalGauge{
-		ChainID:          chainID,
-		DelegatorAddress: delegatorAddress,
+		ChainID:            chainID,
+		DelegatorAddresses: delegatorAddresses,
 		ActiveProposalsDesc: prometheus.NewDesc(
 			"tendermint_active_proposals_total",
 			"Total active proposals",
@@ -66,13 +67,27 @@ func (collector *ActiveProposalGauge) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	// Voted active proposal
-	votedGovRes, err := govClient.Proposals(
-		context.Background(),
-		&govtypes.QueryProposalsRequest{
-			ProposalStatus: govtypes.StatusVotingPeriod,
-			Voter:          collector.DelegatorAddress,
-		},
-	)
-	ch <- prometheus.MustNewConstMetric(collector.VotedActiveProposalsDesc, prometheus.GaugeValue, float64(len(votedGovRes.Proposals)), collector.ChainID, collector.DelegatorAddress)
+	var wg sync.WaitGroup
 
+	for _, address := range collector.DelegatorAddresses {
+		wg.Add(1)
+		go func(address string) {
+			defer wg.Done()
+			votedGovRes, err := govClient.Proposals(
+				context.Background(),
+				&govtypes.QueryProposalsRequest{
+					ProposalStatus: govtypes.StatusVotingPeriod,
+					Voter:          address,
+				},
+			)
+
+			if err != nil {
+				ch <- prometheus.NewInvalidMetric(collector.VotedActiveProposalsDesc, err)
+				return
+			}
+
+			ch <- prometheus.MustNewConstMetric(collector.VotedActiveProposalsDesc, prometheus.GaugeValue, float64(len(votedGovRes.Proposals)), collector.ChainID, address)
+		}(address)
+	}
+	wg.Wait()
 }
