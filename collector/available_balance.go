@@ -65,7 +65,7 @@ func (collector *AvailableBalanceGauge) Collect(ch chan<- prometheus.Metric) {
 				baseDenom, found := collector.DenomMetadata[balance.Denom]
 				if !found {
 					ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
-					return
+					continue
 				}
 
 				var balanceFromBaseToDisPlay float64

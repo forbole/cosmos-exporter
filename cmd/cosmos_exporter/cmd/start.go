@@ -146,7 +146,7 @@ func addDenomsMetadata(grpcConn *grpc.ClientConn, denomsMetadata map[string]type
 
 // In some chains, DenomsMetadata request return empty so needs to add manually
 func addCustomDenomMetadata(cfgDenom types.DenomMetadata, denomsMetadata map[string]types.DenomMetadata) {
-	if !cfgDenom.IsStructureEmpty() {
+	if !cfgDenom.IsStructureEmpty() && (cfgDenom.Base != "" && cfgDenom.Display != "" && cfgDenom.Exponent != 0) {
 		denomsMetadata[cfgDenom.Base] = types.NewDenomMetadata(cfgDenom.Base, cfgDenom.Display, cfgDenom.Exponent)
 	}
 }
