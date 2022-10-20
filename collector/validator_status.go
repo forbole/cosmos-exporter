@@ -45,7 +45,7 @@ func (collector *CosmosSDKCollector) CollectValidatorStat() {
 			return
 		}
 		fromBaseToDisplay := value / math.Pow10(int(baseDenom.Exponent))
-		ValidatorCommissionRateGauge.WithLabelValues(collector.valAddress, collector.chainID).Set(fromBaseToDisplay)
+		ValidatorVotingPowerGauge.WithLabelValues(collector.valAddress, collector.chainID, baseDenom.Display).Set(fromBaseToDisplay)
 	}
 
 }
