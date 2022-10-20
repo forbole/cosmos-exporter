@@ -2,71 +2,41 @@ package collector
 
 import (
 	"context"
+	"log"
 	"math"
 	"strconv"
 	"sync"
 
 	distributiontypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
-	types "github.com/forbole/cosmos-exporter/types"
-	"github.com/prometheus/client_golang/prometheus"
-	"google.golang.org/grpc"
 )
 
-type DelegatorRewardGauge struct {
-	ChainID            string
-	Desc               *prometheus.Desc
-	DenomMetadata      map[string]types.DenomMetadata
-	DefaultMintDenom   string
-	GrpcConn           *grpc.ClientConn
-	DelegatorAddresses []string
-}
-
-func NewDelegatorRewardGauge(grpcConn *grpc.ClientConn, delegatorAddresses []string, chainID string, denomMetadata map[string]types.DenomMetadata, defaultMintDenom string) *DelegatorRewardGauge {
-	return &DelegatorRewardGauge{
-		ChainID: chainID,
-		Desc: prometheus.NewDesc(
-			"tendermint_staking_reward_total",
-			"Rewards of the delegator address from validator",
-			[]string{"delegator_address", "validator_address", "chain_id", "denom"},
-			nil,
-		),
-		DenomMetadata:      denomMetadata,
-		DefaultMintDenom:   defaultMintDenom,
-		GrpcConn:           grpcConn,
-		DelegatorAddresses: delegatorAddresses,
-	}
-}
-
-func (collector *DelegatorRewardGauge) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.Desc
-}
-
-func (collector *DelegatorRewardGauge) Collect(ch chan<- prometheus.Metric) {
+func (collector *CosmosSDKCollector) CollectDeleatorReward() {
 	var wg sync.WaitGroup
-	for _, address := range collector.DelegatorAddresses {
+	for _, address := range collector.accAddresses {
 		wg.Add(1)
 		go func(address string) {
 			defer wg.Done()
-			distributionClient := distributiontypes.NewQueryClient(collector.GrpcConn)
+			distributionClient := distributiontypes.NewQueryClient(collector.grpcConn)
 			distributionRes, err := distributionClient.DelegationTotalRewards(
 				context.Background(),
 				&distributiontypes.QueryDelegationTotalRewardsRequest{DelegatorAddress: address},
 			)
 			if err != nil {
-				ch <- prometheus.NewInvalidMetric(collector.Desc, err)
+				ErrorGauge.WithLabelValues("tendermint_staking_reward_total").Inc()
+				log.Print(err)
 				return
 			}
 
 			for _, reward := range distributionRes.Rewards {
-				baseDenom, found := collector.DenomMetadata[collector.DefaultMintDenom]
+				baseDenom, found := collector.denomMetadata[collector.defaultMintDenom]
 				if !found {
-					ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
+					log.Print("No denom infos")
 					return
 				}
 
 				if len(reward.Reward) == 0 {
 					rewardfromBaseToDisplay := float64(0)
-					ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, address, reward.ValidatorAddress, collector.ChainID, baseDenom.Display)
+					DelegatorRewardGauge.WithLabelValues(address, reward.ValidatorAddress, collector.chainID, baseDenom.Display).Set(rewardfromBaseToDisplay)
 				} else {
 					for _, entry := range reward.Reward {
 						var rewardfromBaseToDisplay float64
@@ -75,7 +45,7 @@ func (collector *DelegatorRewardGauge) Collect(ch chan<- prometheus.Metric) {
 						} else {
 							rewardfromBaseToDisplay = value / math.Pow10(int(baseDenom.Exponent))
 						}
-						ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, rewardfromBaseToDisplay, address, reward.ValidatorAddress, collector.ChainID, baseDenom.Display)
+						DelegatorRewardGauge.WithLabelValues(address, reward.ValidatorAddress, collector.chainID, baseDenom.Display).Set(rewardfromBaseToDisplay)
 					}
 				}
 			}

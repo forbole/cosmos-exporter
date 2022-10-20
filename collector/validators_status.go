@@ -2,55 +2,18 @@ package collector
 
 import (
 	"context"
+	"log"
 	"math"
 	"sort"
 
 	querytypes "github.com/cosmos/cosmos-sdk/types/query"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	types "github.com/forbole/cosmos-exporter/types"
-	"github.com/prometheus/client_golang/prometheus"
-	"google.golang.org/grpc"
+
+	cosmostypes "github.com/cosmos/cosmos-sdk/types"
 )
 
-type ValidatorsStatus struct {
-	ChainID          string
-	DenomMetadata    map[string]types.DenomMetadata
-	DefaultBondDenom string
-	GrpcConn         *grpc.ClientConn
-	TotalVotingDesc  *prometheus.Desc
-	ValidatorAddress string
-	ValidatorRanking *prometheus.Desc
-}
-
-func NewValidatorsStatus(grpcConn *grpc.ClientConn, validatorAddress string, chainID string, denomMetadata map[string]types.DenomMetadata, defaultBondDenom string) *ValidatorsStatus {
-	return &ValidatorsStatus{
-		ChainID:          chainID,
-		DenomMetadata:    denomMetadata,
-		DefaultBondDenom: defaultBondDenom,
-		GrpcConn:         grpcConn,
-		TotalVotingDesc: prometheus.NewDesc(
-			"tendermint_voting_power_total",
-			"Total voting power of validators",
-			[]string{"chain_id", "denom"},
-			nil,
-		),
-		ValidatorAddress: validatorAddress,
-		ValidatorRanking: prometheus.NewDesc(
-			"tendermint_validator_voting_power_ranking",
-			"Ranking of the validator based on voting power",
-			[]string{"chain_id"},
-			nil,
-		),
-	}
-}
-
-func (collector *ValidatorsStatus) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.TotalVotingDesc
-	ch <- collector.ValidatorRanking
-}
-
-func (collector *ValidatorsStatus) Collect(ch chan<- prometheus.Metric) {
-	stakingClient := stakingtypes.NewQueryClient(collector.GrpcConn)
+func (collector *CosmosSDKCollector) CollectValidatorsStat() {
+	stakingClient := stakingtypes.NewQueryClient(collector.grpcConn)
 	validatorsResponse, err := stakingClient.Validators(
 		context.Background(),
 		&stakingtypes.QueryValidatorsRequest{
@@ -60,12 +23,15 @@ func (collector *ValidatorsStatus) Collect(ch chan<- prometheus.Metric) {
 		},
 	)
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(collector.TotalVotingDesc, err)
+		ErrorGauge.WithLabelValues("tendermint_voting_power_total").Inc()
+		log.Print(err)
 		return
 	}
 
-	var totalVotingPower float64
 	var validatorRanking int
+	bondedTokens := cosmostypes.ZeroInt()
+	notBondedTokens := cosmostypes.ZeroInt()
+
 	validators := validatorsResponse.Validators
 
 	// Sort to get validator ranking.
@@ -74,23 +40,51 @@ func (collector *ValidatorsStatus) Collect(ch chan<- prometheus.Metric) {
 	})
 
 	for index, validator := range validators {
-		votingPower, err := validator.DelegatorShares.Float64()
 		if err != nil {
-			panic(err)
+			log.Print(err)
+			return
 		}
-		totalVotingPower += votingPower
-		if validator.OperatorAddress == collector.ValidatorAddress {
+
+		switch validator.GetStatus() {
+		case stakingtypes.Bonded:
+			bondedTokens = bondedTokens.Add(validator.GetTokens())
+
+		case stakingtypes.Unbonding, stakingtypes.Unbonded:
+			notBondedTokens = notBondedTokens.Add(validator.GetTokens())
+
+		default:
+			panic("invalid validator status")
+		}
+
+		if validator.OperatorAddress == collector.valAddress {
 			validatorRanking = index + 1
 		}
 	}
+	bondedTokensToFloat, err := bondedTokens.ToDec().Float64()
 
-	baseDenom, found := collector.DenomMetadata[collector.DefaultBondDenom]
-	if !found {
-		ch <- prometheus.NewInvalidMetric(collector.TotalVotingDesc, &types.DenomNotFound{})
+	if err != nil {
+		ErrorGauge.WithLabelValues("tendermint_voting_power_total").Inc()
+		log.Print(err)
 		return
 	}
-	fromBaseToDisplay := totalVotingPower / math.Pow10(int(baseDenom.Exponent))
+	notBondedTokensToFloat, err := notBondedTokens.ToDec().Float64()
 
-	ch <- prometheus.MustNewConstMetric(collector.TotalVotingDesc, prometheus.GaugeValue, fromBaseToDisplay, collector.ChainID, baseDenom.Display)
-	ch <- prometheus.MustNewConstMetric(collector.ValidatorRanking, prometheus.GaugeValue, float64(validatorRanking), collector.ChainID)
+	if err != nil {
+		ErrorGauge.WithLabelValues("tendermint_voting_power_total").Inc()
+		log.Print(err)
+		return
+	}
+
+	baseDenom, found := collector.denomMetadata[collector.defaultBondDenom]
+	if !found {
+		log.Print("No denom infos")
+		return
+	}
+
+	bondedTokensTodisplay := bondedTokensToFloat / math.Pow10(int(baseDenom.Exponent))
+	notBondedTokensTodisplay := notBondedTokensToFloat / math.Pow10(int(baseDenom.Exponent))
+
+	BondedTokenGauge.WithLabelValues(collector.chainID).Set(bondedTokensTodisplay)
+	NotBondedTokenGauge.WithLabelValues(collector.chainID).Set(notBondedTokensTodisplay)
+	ValidatorVotingPowerRanking.WithLabelValues(collector.valAddress, collector.chainID).Set(float64(validatorRanking))
 }

@@ -2,51 +2,22 @@ package collector
 
 import (
 	"context"
+	"log"
 	"math"
 	"strconv"
 	"sync"
 
 	querytypes "github.com/cosmos/cosmos-sdk/types/query"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	types "github.com/forbole/cosmos-exporter/types"
-	"github.com/prometheus/client_golang/prometheus"
-	"google.golang.org/grpc"
 )
 
-type AvailableBalanceGauge struct {
-	ChainID            string
-	Desc               *prometheus.Desc
-	DenomMetadata      map[string]types.DenomMetadata
-	GrpcConn           *grpc.ClientConn
-	DelegatorAddresses []string
-}
-
-func NewAvailableBalanceGauge(grpcConn *grpc.ClientConn, delegatorAddresses []string, chainID string, denomMetadata map[string]types.DenomMetadata) *AvailableBalanceGauge {
-	return &AvailableBalanceGauge{
-		ChainID: chainID,
-		Desc: prometheus.NewDesc(
-			"tendermint_available_balance",
-			"Stake amount of delegator address to validator",
-			[]string{"delegator_address", "chain_id", "denom"},
-			nil,
-		),
-		DenomMetadata:      denomMetadata,
-		GrpcConn:           grpcConn,
-		DelegatorAddresses: delegatorAddresses,
-	}
-}
-
-func (collector *AvailableBalanceGauge) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.Desc
-}
-
-func (collector *AvailableBalanceGauge) Collect(ch chan<- prometheus.Metric) {
+func (collector *CosmosSDKCollector) CollectAvailableBalance() {
 	var wg sync.WaitGroup
-	for _, address := range collector.DelegatorAddresses {
+	for _, address := range collector.accAddresses {
 		wg.Add(1)
 		go func(address string) {
 			defer wg.Done()
-			bankClient := banktypes.NewQueryClient(collector.GrpcConn)
+			bankClient := banktypes.NewQueryClient(collector.grpcConn)
 			bankRes, err := bankClient.AllBalances(
 				context.Background(),
 				&banktypes.QueryAllBalancesRequest{
@@ -57,14 +28,15 @@ func (collector *AvailableBalanceGauge) Collect(ch chan<- prometheus.Metric) {
 				},
 			)
 			if err != nil {
-				ch <- prometheus.NewInvalidMetric(collector.Desc, err)
+				ErrorGauge.WithLabelValues("tendermint_available_balance").Inc()
+				log.Print(err)
 				return
 			}
 
 			for _, balance := range bankRes.Balances {
-				baseDenom, found := collector.DenomMetadata[balance.Denom]
+				baseDenom, found := collector.denomMetadata[balance.Denom]
 				if !found {
-					ch <- prometheus.NewInvalidMetric(collector.Desc, &types.DenomNotFound{})
+					log.Print("No denom infos")
 					continue
 				}
 
@@ -74,7 +46,7 @@ func (collector *AvailableBalanceGauge) Collect(ch chan<- prometheus.Metric) {
 				} else {
 					balanceFromBaseToDisPlay = value / math.Pow10(int(baseDenom.Exponent))
 				}
-				ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, balanceFromBaseToDisPlay, address, collector.ChainID, baseDenom.Display)
+				AvailableBalanceGauge.WithLabelValues(collector.chainID, address, baseDenom.Display).Set(balanceFromBaseToDisPlay)
 			}
 		}(address)
 	}

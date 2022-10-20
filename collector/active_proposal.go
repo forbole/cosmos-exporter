@@ -2,48 +2,14 @@ package collector
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
-	"github.com/prometheus/client_golang/prometheus"
-	"google.golang.org/grpc"
 )
 
-type ActiveProposalGauge struct {
-	ChainID                  string
-	DelegatorAddresses       []string
-	ActiveProposalsDesc      *prometheus.Desc
-	VotedActiveProposalsDesc *prometheus.Desc
-	GrpcConn                 *grpc.ClientConn
-}
-
-func NewActiveProposalGauge(grpcConn *grpc.ClientConn, delegatorAddresses []string, chainID string) *ActiveProposalGauge {
-	return &ActiveProposalGauge{
-		ChainID:            chainID,
-		DelegatorAddresses: delegatorAddresses,
-		ActiveProposalsDesc: prometheus.NewDesc(
-			"tendermint_active_proposals_total",
-			"Total active proposals",
-			[]string{"chain_id", "type"},
-			nil,
-		),
-		GrpcConn: grpcConn,
-		VotedActiveProposalsDesc: prometheus.NewDesc(
-			"tendermint_voted_active_proposals_total",
-			"Total voted active proposals",
-			[]string{"chain_id", "voter_address"},
-			nil,
-		),
-	}
-}
-
-func (collector *ActiveProposalGauge) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.ActiveProposalsDesc
-	ch <- collector.VotedActiveProposalsDesc
-}
-
-func (collector *ActiveProposalGauge) Collect(ch chan<- prometheus.Metric) {
-	govClient := govtypes.NewQueryClient(collector.GrpcConn)
+func (collector *CosmosSDKCollector) CollectActiveProposal() {
+	govClient := govtypes.NewQueryClient(collector.grpcConn)
 	govRes, err := govClient.Proposals(
 		context.Background(),
 		&govtypes.QueryProposalsRequest{
@@ -52,7 +18,8 @@ func (collector *ActiveProposalGauge) Collect(ch chan<- prometheus.Metric) {
 	)
 
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(collector.ActiveProposalsDesc, err)
+		ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
+		log.Print(err)
 		return
 	}
 
@@ -63,13 +30,13 @@ func (collector *ActiveProposalGauge) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	for key, total := range countProposalType {
-		ch <- prometheus.MustNewConstMetric(collector.ActiveProposalsDesc, prometheus.GaugeValue, total, collector.ChainID, key)
+		ActiveProposalGauge.WithLabelValues(collector.chainID, key).Set(float64(total))
 	}
 
 	// Voted active proposal
 	var wg sync.WaitGroup
 
-	for _, address := range collector.DelegatorAddresses {
+	for _, address := range collector.accAddresses {
 		wg.Add(1)
 		go func(address string) {
 			defer wg.Done()
@@ -82,11 +49,12 @@ func (collector *ActiveProposalGauge) Collect(ch chan<- prometheus.Metric) {
 			)
 
 			if err != nil {
-				ch <- prometheus.NewInvalidMetric(collector.VotedActiveProposalsDesc, err)
+				ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
+				log.Print(err)
 				return
 			}
 
-			ch <- prometheus.MustNewConstMetric(collector.VotedActiveProposalsDesc, prometheus.GaugeValue, float64(len(votedGovRes.Proposals)), collector.ChainID, address)
+			VotedActiveProposalGauge.WithLabelValues(collector.chainID, address).Set(float64(float64(len(votedGovRes.Proposals))))
 		}(address)
 	}
 	wg.Wait()

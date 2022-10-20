@@ -2,64 +2,36 @@ package collector
 
 import (
 	"context"
+	"log"
 	"math"
 	"strconv"
 
 	distributiontypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
-	types "github.com/forbole/cosmos-exporter/types"
-	"github.com/prometheus/client_golang/prometheus"
-	"google.golang.org/grpc"
 )
 
-type ValidatorCommissionGauge struct {
-	ChainID          string
-	Desc             *prometheus.Desc
-	DenomMetadata    map[string]types.DenomMetadata
-	GrpcConn         *grpc.ClientConn
-	ValidatorAddress string
-}
-
-func NewValidatorCommissionGauge(grpcConn *grpc.ClientConn, validatorAddress string, chainID string, denomMetadata map[string]types.DenomMetadata) *ValidatorCommissionGauge {
-	return &ValidatorCommissionGauge{
-		ChainID: chainID,
-		Desc: prometheus.NewDesc(
-			"tendermint_validator_commission_total",
-			"Commission of the validator",
-			[]string{"validator_address", "chain_id", "denom"},
-			nil,
-		),
-		DenomMetadata:    denomMetadata,
-		GrpcConn:         grpcConn,
-		ValidatorAddress: validatorAddress,
-	}
-}
-
-func (collector *ValidatorCommissionGauge) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.Desc
-}
-
-func (collector *ValidatorCommissionGauge) Collect(ch chan<- prometheus.Metric) {
-	distributionClient := distributiontypes.NewQueryClient(collector.GrpcConn)
+func (collector *CosmosSDKCollector) CollectValidatorCommissionGauge() {
+	distributionClient := distributiontypes.NewQueryClient(collector.grpcConn)
 	distributionRes, err := distributionClient.ValidatorCommission(
 		context.Background(),
-		&distributiontypes.QueryValidatorCommissionRequest{ValidatorAddress: collector.ValidatorAddress},
+		&distributiontypes.QueryValidatorCommissionRequest{ValidatorAddress: collector.valAddress},
 	)
 	if err != nil {
-		ch <- prometheus.NewInvalidMetric(collector.Desc, err)
+		ErrorGauge.WithLabelValues("tendermint_validator_commission_total").Inc()
+		log.Print(err)
 		return
 	}
 
 	for _, commission := range distributionRes.Commission.Commission {
 		if value, err := strconv.ParseFloat(commission.Amount.String(), 64); err != nil {
-			ch <- prometheus.NewInvalidMetric(collector.Desc, err)
+			ErrorGauge.WithLabelValues("tendermint_validator_commission_total").Inc()
 		} else {
-			baseDenom, found := collector.DenomMetadata[commission.Denom]
+			baseDenom, found := collector.denomMetadata[commission.Denom]
 			if !found {
 				continue
 			}
 			commissionFromBaseToDisplay := value / math.Pow10(int(baseDenom.Exponent))
 
-			ch <- prometheus.MustNewConstMetric(collector.Desc, prometheus.GaugeValue, commissionFromBaseToDisplay, collector.ValidatorAddress, collector.ChainID, baseDenom.Display)
+			ValidatorCommissionGauge.WithLabelValues(collector.valAddress, collector.chainID, baseDenom.Display).Set(commissionFromBaseToDisplay)
 		}
 	}
 
