@@ -124,6 +124,14 @@ var (
 		[]string{"chain_id", "denom"},
 	)
 
+	InflationRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "tendermint_inflation_rate",
+			Help: "Current minting inflation value",
+		},
+		[]string{"chain_id"},
+	)
+
 	// represents number of errors while collecting chain stats
 	// collector label is used to determine which collector to debug
 	ErrorGauge = prometheus.NewCounterVec(
@@ -151,6 +159,8 @@ func init() {
 		ValidatorVotingPowerRanking,
 		BondedTokenGauge,
 		NotBondedTokenGauge,
+		CirculatingSupply,
+		InflationRate,
 		ErrorGauge,
 	)
 }

@@ -62,6 +62,8 @@ func (c *CosmosSDKCollector) CollectChainMetrics() {
 	c.CollectValidatorDelegationGauge()
 	c.CollectValidatorStat()
 	c.CollectValidatorsStat()
+	c.CollectCirculatingSupply()
+	c.CollectInflationRate()
 }
 
 // Find Chain id to add as metrics lable
