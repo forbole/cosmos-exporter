@@ -64,6 +64,8 @@ func (c *CosmosSDKCollector) CollectChainMetrics() {
 	c.CollectValidatorsStat()
 	c.CollectCirculatingSupply()
 	c.CollectInflationRate()
+	c.CollectCommunityTax()
+	c.CollectUnbondingTime()
 }
 
 // Find Chain id to add as metrics lable

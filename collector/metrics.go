@@ -132,6 +132,21 @@ var (
 		[]string{"chain_id"},
 	)
 
+	CommunityTax = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "tendermint_community_tax_rate",
+		},
+		[]string{"chain_id"},
+	)
+
+	UnbondingTime = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "tendermint_unbonding_time",
+			Help: "Unbonding time in second",
+		},
+		[]string{"chain_id"},
+	)
+
 	// represents number of errors while collecting chain stats
 	// collector label is used to determine which collector to debug
 	ErrorGauge = prometheus.NewCounterVec(
@@ -161,6 +176,8 @@ func init() {
 		NotBondedTokenGauge,
 		CirculatingSupply,
 		InflationRate,
+		CommunityTax,
+		UnbondingTime,
 		ErrorGauge,
 	)
 }
