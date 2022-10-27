@@ -119,9 +119,9 @@ var (
 	CirculatingSupply = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "tendermint_circulating_supply",
-			Help: "total supply of coins of the chain",
+			Help: "total circulating supply of staking token",
 		},
-		[]string{"chain_id", "denom"},
+		[]string{"chain_id"},
 	)
 
 	InflationRate = prometheus.NewGaugeVec(

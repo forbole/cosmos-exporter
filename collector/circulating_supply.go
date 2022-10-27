@@ -27,5 +27,5 @@ func (collector *CosmosSDKCollector) CollectCirculatingSupply() {
 	}
 	SupplyFromBaseToDisplay := bankRes.Amount.Amount.ToDec().MustFloat64() / math.Pow10(int(baseDenom.Exponent))
 
-	CirculatingSupply.WithLabelValues(collector.chainID, baseDenom.Display).Set(SupplyFromBaseToDisplay)
+	CirculatingSupply.WithLabelValues(collector.chainID).Set(SupplyFromBaseToDisplay)
 }
