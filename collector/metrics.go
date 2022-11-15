@@ -15,10 +15,10 @@ var (
 
 	VotedActiveProposalGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "tendermint_voted_active_proposals_total",
-			Help: "Total active proposals on chain that voter_address voted",
+			Name: "tendermint_active_proposals_vote_status",
+			Help: "Voter_address's vote status, return 1 if voted, return 0 if not voted",
 		},
-		[]string{"chain_id", "voter_address"},
+		[]string{"chain_id", "voter_address", "proposal_id"},
 	)
 
 	AvailableBalanceGauge = prometheus.NewGaugeVec(
