@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func (collector *CosmosSDKCollector) CollectActiveProposal() {
@@ -15,6 +16,18 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		context.Background(),
 		&govtypes.QueryProposalsRequest{
 			ProposalStatus: govtypes.StatusVotingPeriod,
+		},
+	)
+
+	VotedActiveProposalGauge.DeletePartialMatch(
+		prometheus.Labels{
+			"chain_id": collector.chainID,
+		},
+	)
+
+	ActiveProposalGauge.DeletePartialMatch(
+		prometheus.Labels{
+			"chain_id": collector.chainID,
 		},
 	)
 
