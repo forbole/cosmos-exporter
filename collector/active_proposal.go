@@ -19,6 +19,12 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		},
 	)
 
+	if err != nil {
+		ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
+		log.Print(err)
+		return
+	}
+
 	VotedActiveProposalGauge.DeletePartialMatch(
 		prometheus.Labels{
 			"chain_id": collector.chainID,
@@ -30,12 +36,6 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 			"chain_id": collector.chainID,
 		},
 	)
-
-	if err != nil {
-		ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
-		log.Print(err)
-		return
-	}
 
 	// Count proposals base on TypeUrl
 	countProposalType := make(map[string]float64)
