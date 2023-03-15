@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
 
 	querytypes "github.com/cosmos/cosmos-sdk/types/query"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -60,15 +61,15 @@ func (collector *CosmosSDKCollector) CollectValidatorsStat() {
 			validatorRanking = index + 1
 		}
 	}
-	bondedTokensToFloat, err := bondedTokens.ToDec().Float64()
 
+	bondedTokensToFloat, err := strconv.ParseFloat(bondedTokens.String(), 64)
 	if err != nil {
 		ErrorGauge.WithLabelValues("tendermint_voting_power_total").Inc()
 		log.Print(err)
 		return
 	}
-	notBondedTokensToFloat, err := notBondedTokens.ToDec().Float64()
 
+	notBondedTokensToFloat, err := strconv.ParseFloat(notBondedTokens.String(), 64)
 	if err != nil {
 		ErrorGauge.WithLabelValues("tendermint_voting_power_total").Inc()
 		log.Print(err)

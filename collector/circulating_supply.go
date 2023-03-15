@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"math"
+	"strconv"
 
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 )
@@ -25,7 +26,14 @@ func (collector *CosmosSDKCollector) CollectCirculatingSupply() {
 		log.Print("No denom infos")
 		return
 	}
-	SupplyFromBaseToDisplay := bankRes.Amount.Amount.ToDec().MustFloat64() / math.Pow10(int(baseDenom.Exponent))
+
+	supply, err := strconv.ParseFloat(bankRes.Amount.Amount.String(), 64)
+	if err != nil {
+		ErrorGauge.WithLabelValues("tendermint_circulating_supply").Inc()
+		log.Print(err)
+		return
+	}
+	SupplyFromBaseToDisplay := supply / math.Pow10(int(baseDenom.Exponent))
 
 	CirculatingSupply.WithLabelValues(collector.chainID).Set(SupplyFromBaseToDisplay)
 }
