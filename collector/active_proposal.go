@@ -52,7 +52,7 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 			wg.Add(1)
 			go func(address string) {
 				defer wg.Done()
-				vote, err := govClient.Vote(
+				_, err := govClient.Vote(
 					context.Background(),
 					&v1.QueryVoteRequest{
 						ProposalId: proposal.Id,

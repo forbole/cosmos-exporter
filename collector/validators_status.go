@@ -29,8 +29,8 @@ func (collector *CosmosSDKCollector) CollectValidatorsStat() {
 	}
 
 	var validatorRanking int
-	bondedTokens := cosmostypes.ZeroInt()
-	notBondedTokens := cosmostypes.ZeroInt()
+	bondedTokens := cosmostypes.NewInt(0)
+	notBondedTokens := cosmostypes.NewInt(0)
 
 	validators := validatorsResponse.Validators
 
