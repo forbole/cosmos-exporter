@@ -25,7 +25,7 @@ func (collector *CosmosSDKCollector) CollectCirculatingSupply() {
 		log.Print("No denom infos")
 		return
 	}
-	SupplyFromBaseToDisplay := bankRes.Amount.Amount.ToDec().MustFloat64() / math.Pow10(int(baseDenom.Exponent))
+	SupplyFromBaseToDisplay := float64(bankRes.Amount.Amount.Int64()) / math.Pow10(int(baseDenom.Exponent))
 
 	CirculatingSupply.WithLabelValues(collector.chainID).Set(SupplyFromBaseToDisplay)
 }

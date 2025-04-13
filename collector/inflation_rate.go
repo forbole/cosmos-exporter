@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 
-	sdkerrors "cosmossdk.io/errors"
 	"github.com/cosmos/cosmos-sdk/x/mint/types"
 )
 
