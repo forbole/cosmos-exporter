@@ -9,6 +9,13 @@ This version has been upgraded to support:
 
 The exporter should still work with older chains, but is optimized for newer versions.
 
+### Backward Compatibility
+The exporter maintains backward compatibility with:
+- Older Cosmos SDK versions (v0.45.x and earlier)
+- Tendermint nodes (pre-CometBFT)
+
+This allows for a smooth upgrade path, as the same exporter can be used across different chain versions in your infrastructure.
+
 # Config file template
 ```yaml
 delegator_addresses: 
