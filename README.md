@@ -2,6 +2,12 @@
 1. `make install`
 2. `cosmos-expoter start --home /path/to/config/file/config.yaml`
 
+## Compatibility
+This version has been upgraded to support:
+- Cosmos SDK v0.50.x
+- CometBFT v0.38+
+
+The exporter should still work with older chains, but is optimized for newer versions.
 
 # Config file template
 ```yaml

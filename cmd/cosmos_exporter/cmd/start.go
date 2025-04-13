@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
@@ -41,9 +42,11 @@ var startCmd = &cobra.Command{
 		var grpcOpts []grpc.DialOption
 
 		if config.Node.IsSecure {
-			grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
+			grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+				InsecureSkipVerify: false,
+			})))
 		} else {
-			grpcOpts = append(grpcOpts, grpc.WithInsecure())
+			grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		}
 
 		address := HTTPProtocols.ReplaceAllString(config.Node.GRPC, "")
@@ -61,8 +64,8 @@ var startCmd = &cobra.Command{
 			}
 		}()
 		http.Handle("/metrics", promhttp.Handler())
+		log.Printf("Start listening on port %s", config.Port)
 		log.Fatal(http.ListenAndServe(config.Port, nil))
-		fmt.Printf("Start listening on port %s", config.Port)
 		return nil
 	},
 }

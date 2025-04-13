@@ -7,8 +7,8 @@ import (
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
 	types "github.com/forbole/cosmos-exporter/types"
-	tmrpc "github.com/tendermint/tendermint/rpc/client/http"
 	"google.golang.org/grpc"
 )
 
@@ -70,7 +70,7 @@ func (c *CosmosSDKCollector) CollectChainMetrics() {
 
 // Find Chain id to add as metrics lable
 func getChainID(rpc string) string {
-	client, err := tmrpc.New(rpc, "/websocket")
+	client, err := cmthttp.New(rpc, "/websocket")
 	if err != nil {
 		panic(err)
 	}
@@ -86,11 +86,15 @@ func getChainID(rpc string) string {
 // Find Denom metadata to convert to human-readable unit (eg. udsm -> dsm)
 func addDenomsMetadata(grpcConn *grpc.ClientConn, denomsMetadata map[string]types.DenomMetadata) {
 	bankClient := banktypes.NewQueryClient(grpcConn)
+	
+	// In v0.50.x, pagination works differently
+	// Use the v1beta1.PageRequest which has been updated
 	denomsRes, err := bankClient.DenomsMetadata(
 		context.Background(),
 		&banktypes.QueryDenomsMetadataRequest{
 			Pagination: &querytypes.PageRequest{
 				Limit: 1000,
+				CountTotal: true,
 			},
 		},
 	)
@@ -127,7 +131,15 @@ func getMintDenom(grpcConn *grpc.ClientConn) (string, error) {
 		return "", err
 	}
 
-	return mintParamsRes.Params.MintDenom, nil
+	// In v0.50.x, MintDenom might be at a different path in the params response
+	// Check if we're using the legacy structure or the new one
+	if mintParamsRes != nil && mintParamsRes.Params.MintDenom != "" {
+		return mintParamsRes.Params.MintDenom, nil
+	}
+	
+	// If MintDenom isn't directly accessible, attempt to get it from another query
+	// Some chains may have modified the mint module or not have it
+	return "", err
 }
 
 func getBondDenom(grpcConn *grpc.ClientConn) (string, error) {

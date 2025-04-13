@@ -6,16 +6,16 @@ import (
 	"strconv"
 	"sync"
 
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	"github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 func (collector *CosmosSDKCollector) CollectActiveProposal() {
-	govClient := govtypes.NewQueryClient(collector.grpcConn)
+	govClient := v1.NewQueryClient(collector.grpcConn)
 	govRes, err := govClient.Proposals(
 		context.Background(),
-		&govtypes.QueryProposalsRequest{
-			ProposalStatus: govtypes.StatusVotingPeriod,
+		&v1.QueryProposalsRequest{
+			ProposalStatus: v1.StatusVotingPeriod,
 		},
 	)
 
@@ -40,7 +40,12 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 	// Count proposals base on TypeUrl
 	countProposalType := make(map[string]float64)
 	for _, proposal := range govRes.Proposals {
-		countProposalType[proposal.Content.TypeUrl] += 1
+		msgTypeUrl := "unknown"
+		if proposal.Messages != nil && len(proposal.Messages) > 0 {
+			msgTypeUrl = proposal.Messages[0].TypeUrl
+		}
+		countProposalType[msgTypeUrl] += 1
+		
 		// Vote status
 		var wg sync.WaitGroup
 		for _, address := range collector.accAddresses {
@@ -49,20 +54,19 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 				defer wg.Done()
 				vote, err := govClient.Vote(
 					context.Background(),
-					&govtypes.QueryVoteRequest{
-						ProposalId: proposal.ProposalId,
+					&v1.QueryVoteRequest{
+						ProposalId: proposal.Id,
 						Voter:      address,
 					},
 				)
-				vote.GetVote()
 
 				// When the voter_address hasn't voted, the query returns "not found for proposal" error
 				if err != nil {
-					VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.ProposalId, 10)).Set(float64(0))
+					VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(float64(0))
 					return
 				}
 
-				VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.ProposalId, 10)).Set(float64(1))
+				VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(float64(1))
 			}(address)
 		}
 		wg.Wait()

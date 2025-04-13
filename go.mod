@@ -1,15 +1,15 @@
 module github.com/forbole/cosmos-exporter
 
-go 1.18
+go 1.20
 
 require (
-	github.com/cosmos/cosmos-sdk v0.45.4
+	github.com/cosmos/cosmos-sdk v0.50.2
+	github.com/cometbft/cometbft v0.38.2
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/prometheus/client_golang v1.14.0
-	github.com/spf13/cobra v1.4.0
-	github.com/spf13/viper v1.10.1
-	github.com/tendermint/tendermint v0.34.19
-	google.golang.org/grpc v1.45.0
+	github.com/prometheus/client_golang v1.17.0
+	github.com/spf13/cobra v1.8.0
+	github.com/spf13/viper v1.18.2
+	google.golang.org/grpc v1.59.0
 )
 
 require (
@@ -103,7 +103,6 @@ require (
 )
 
 replace (
-	github.com/forbole/cosmos-exporter/collector => /home/forbole/cosmos-exporter/collector
+	github.com/cosmos/cosmos-sdk => github.com/cosmos/cosmos-sdk v0.50.2
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
-	google.golang.org/grpc => google.golang.org/grpc v1.33.2
 )
