@@ -2,12 +2,14 @@ package collector
 
 import (
 	"context"
+	"log"
+	"time"
 
+	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
 	querytypes "github.com/cosmos/cosmos-sdk/types/query"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
 	types "github.com/forbole/cosmos-exporter/types"
 	"google.golang.org/grpc"
 )
@@ -72,12 +74,17 @@ func (c *CosmosSDKCollector) CollectChainMetrics() {
 func getChainID(rpc string) string {
 	client, err := cmthttp.New(rpc, "/websocket")
 	if err != nil {
-		panic(err)
+		log.Printf("Error creating RPC client: %v", err)
+		return "unknown-chain"
 	}
 
-	status, err := client.Status(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	status, err := client.Status(ctx)
 	if err != nil {
-		panic(err)
+		log.Printf("Error getting chain status: %v", err)
+		return "unknown-chain"
 	}
 
 	return status.NodeInfo.Network
@@ -86,20 +93,21 @@ func getChainID(rpc string) string {
 // Find Denom metadata to convert to human-readable unit (eg. udsm -> dsm)
 func addDenomsMetadata(grpcConn *grpc.ClientConn, denomsMetadata map[string]types.DenomMetadata) {
 	bankClient := banktypes.NewQueryClient(grpcConn)
-	
+
 	// In v0.50.x, pagination works differently
 	// Use the v1beta1.PageRequest which has been updated
 	denomsRes, err := bankClient.DenomsMetadata(
 		context.Background(),
 		&banktypes.QueryDenomsMetadataRequest{
 			Pagination: &querytypes.PageRequest{
-				Limit: 1000,
+				Limit:      1000,
 				CountTotal: true,
 			},
 		},
 	)
 	if err != nil {
-		panic(err)
+		log.Printf("Error getting denoms metadata: %v", err)
+		return
 	}
 
 	for _, metadata := range denomsRes.Metadatas {
@@ -136,7 +144,7 @@ func getMintDenom(grpcConn *grpc.ClientConn) (string, error) {
 	if mintParamsRes != nil && mintParamsRes.Params.MintDenom != "" {
 		return mintParamsRes.Params.MintDenom, nil
 	}
-	
+
 	// If MintDenom isn't directly accessible, attempt to get it from another query
 	// Some chains may have modified the mint module or not have it
 	return "", err
