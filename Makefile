@@ -40,3 +40,13 @@ lint-fix:
 clean:
 	rm -f tools-stamp ./build/**
 .PHONY: clean
+
+###############################################################################
+###                           v0.50.x Testing                               ###
+###############################################################################
+test-upgraded:
+	@echo "Testing against Cosmos SDK v0.50.x chain..."
+	@go build -mod=readonly -o build/cosmos_exporter ./cmd/cosmos_exporter
+	@echo "Binary built. Configure with a v0.50.x chain and run:"
+	@echo "./build/cosmos_exporter start --home /path/to/config/file/config.yaml"
+.PHONY: test-upgraded

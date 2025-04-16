@@ -14,7 +14,7 @@ func (collector *CosmosSDKCollector) CollectCommunityTax() {
 		&distributiontypes.QueryParamsRequest{},
 	)
 	if err != nil {
-		ErrorGauge.WithLabelValues("&distributiontypes.").Inc()
+		ErrorGauge.WithLabelValues("tendermint_community_tax_rate").Inc()
 		log.Print(err)
 		return
 	}
