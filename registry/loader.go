@@ -20,14 +20,24 @@ type ChainRegistryChain struct {
 	} `json:"apis"`
 }
 
-func LoadChainRegistryChain(repoRoot, chainName string) (*ChainRegistryChain, error) {
-	p := filepath.Join(repoRoot, "chain-registry", chainName, "chain.json")
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil, err
+// LoadChainRegistryChain loads chain.json from either:
+// 1. basePath/<chainName>/chain.json (preferred when --chain-registry-path points directly to the repo root)
+// 2. basePath/chain-registry/<chainName>/chain.json (backward compatibility when basePath is project root)
+func LoadChainRegistryChain(basePath, chainName string) (*ChainRegistryChain, error) {
+	primary := filepath.Join(basePath, chainName, "chain.json")
+	var data []byte
+	if b, e := os.ReadFile(primary); e == nil {
+		data = b
+	} else {
+		fallback := filepath.Join(basePath, "chain-registry", chainName, "chain.json")
+		if b2, e2 := os.ReadFile(fallback); e2 == nil {
+			data = b2
+		} else {
+			return nil, e // return original primary error for clarity
+		}
 	}
 	var c ChainRegistryChain
-	if err := json.Unmarshal(b, &c); err != nil {
+	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, err
 	}
 	return &c, nil

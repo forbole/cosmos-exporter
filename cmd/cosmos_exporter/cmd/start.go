@@ -40,7 +40,7 @@ var startCmd = &cobra.Command{
 	Short: "Start exporting cosmos metrics",
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := viper.ReadInConfig(); err != nil { // Handle errors reading the config file
-			panic(fmt.Errorf("Fatal error config file: %w \n", err))
+			panic(fmt.Errorf("fatal error config file: %w", err))
 		}
 		err := viper.Unmarshal(&config)
 		if err != nil {
@@ -98,18 +98,19 @@ var startCmd = &cobra.Command{
 			}
 		}
 
+		// deduplicate while preserving order
 		dedupe := func(in []string) []string {
-			m := make(map[string]struct{})
+			seen := make(map[string]struct{})
 			out := []string{}
 			for _, v := range in {
 				v = strings.TrimSpace(v)
 				if v == "" {
 					continue
 				}
-				if _, ok := m[v]; ok {
+				if _, ok := seen[v]; ok {
 					continue
 				}
-				m[v] = struct{}{}
+				seen[v] = struct{}{}
 				out = append(out, v)
 			}
 			return out
@@ -117,6 +118,7 @@ var startCmd = &cobra.Command{
 		candidateGRPC = dedupe(candidateGRPC)
 		candidateRPC = dedupe(candidateRPC)
 
+		// gRPC selection with health check
 		var grpcConn *grpc.ClientConn
 		var dialErr error
 		var selectedGRPCEndpoint string
@@ -128,7 +130,6 @@ var startCmd = &cobra.Command{
 				log.Printf("[gRPC] dial failed, fallback: %s err=%v", addr, dialErr)
 				continue
 			}
-			// lightweight health check (staking params)
 			hCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			stakingClient := stakingtypes.NewQueryClient(grpcConn)
 			_, hErr := stakingClient.Params(hCtx, &stakingtypes.QueryParamsRequest{})
@@ -148,28 +149,42 @@ var startCmd = &cobra.Command{
 		}
 		defer grpcConn.Close()
 
+		// RPC probing with HTTPS->HTTP downgrade
 		selectedRPC := ""
 		if len(candidateRPC) == 0 {
 			return fmt.Errorf("no RPC endpoints available (config + registry)")
 		}
-		// Probe RPC endpoints sequentially with a light status call
-		for i, r := range candidateRPC {
-			log.Printf("[RPC] probing endpoint (%d/%d): %s", i+1, len(candidateRPC), r)
-			client, err := cmthttp.New(r, "/websocket")
+		probe := func(url string) bool {
+			client, err := cmthttp.New(url, "/websocket")
 			if err != nil {
-				log.Printf("[RPC] client init failed, fallback: %s err=%v", r, err)
-				continue
+				log.Printf("[RPC] client init failed url=%s err=%v", url, err)
+				return false
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 			_, err = client.Status(ctx)
 			cancel()
 			if err != nil {
-				log.Printf("[RPC] status failed, fallback: %s err=%v", r, err)
-				continue
+				log.Printf("[RPC] status failed url=%s err=%v", url, err)
+				return false
 			}
-			selectedRPC = r
-			log.Printf("[RPC] selected endpoint: %s", r)
-			break
+			return true
+		}
+		for i, r := range candidateRPC {
+			log.Printf("[RPC] probing endpoint (%d/%d): %s", i+1, len(candidateRPC), r)
+			if probe(r) {
+				selectedRPC = r
+				log.Printf("[RPC] selected endpoint: %s", r)
+				break
+			}
+			if strings.HasPrefix(r, "https://") {
+				down := "http://" + strings.TrimPrefix(r, "https://")
+				log.Printf("[RPC] attempting downgrade probe: %s", down)
+				if probe(down) {
+					selectedRPC = down
+					log.Printf("[RPC] selected downgraded endpoint: %s", down)
+					break
+				}
+			}
 		}
 		if selectedRPC == "" {
 			return fmt.Errorf("all RPC endpoints failed after %d attempts", len(candidateRPC))
