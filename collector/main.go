@@ -76,23 +76,41 @@ func detectSDKVersion(grpcConn *grpc.ClientConn, rpcConn string) SDKVersion {
 		}
 	}
 
-	// Test for mint module API compatibility
+	// Test for mint module API compatibility (panic-safe)
+	var detectedFromMint SDKVersion = ""
 	mintClient := minttypes.NewQueryClient(grpcConn)
-	_, mintErr := mintClient.AnnualProvisions(ctx, &minttypes.QueryAnnualProvisionsRequest{})
-
-	if mintErr != nil {
-		if strings.Contains(mintErr.Error(), "invalid Go type math.LegacyDec") {
-			// This error specifically happens with v0.50.x chains
-			log.Printf("Detected current SDK version (v0.50.x) from mint error")
-			return SDKVersionCurrent
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				msg := ""
+				if s, ok := r.(string); ok {
+					msg = s
+				} else if err, ok := r.(error); ok {
+					msg = err.Error()
+				}
+				if strings.Contains(msg, "invalid Go type math.LegacyDec") {
+					log.Printf("Detected current SDK version (v0.50.x) from mint panic")
+					detectedFromMint = SDKVersionCurrent
+				} else {
+					log.Printf("Recovered panic in mint AnnualProvisions detection (treating as legacy): %v", r)
+					// Do not set detectedFromMint here; let other heuristics decide
+				}
+			}
+		}()
+		_, mintErr := mintClient.AnnualProvisions(ctx, &minttypes.QueryAnnualProvisionsRequest{})
+		if mintErr != nil {
+			switch {
+			case strings.Contains(mintErr.Error(), "invalid Go type math.LegacyDec"):
+				log.Printf("Detected current SDK version (v0.50.x) from mint error")
+				detectedFromMint = SDKVersionCurrent
+			case strings.Contains(mintErr.Error(), "not implemented"), strings.Contains(mintErr.Error(), "no RPC service"):
+				log.Printf("Detected likely legacy SDK version from mint API absence")
+				detectedFromMint = SDKVersionLegacy
+			}
 		}
-
-		// If we get server errors that might indicate older SDKs
-		if strings.Contains(mintErr.Error(), "not implemented") ||
-			strings.Contains(mintErr.Error(), "no RPC service") {
-			log.Printf("Detected likely legacy SDK version from mint API absence")
-			return SDKVersionLegacy
-		}
+	}()
+	if detectedFromMint != "" {
+		return detectedFromMint
 	}
 
 	log.Printf("SDK version not definitively detected, attempting one more check...")
