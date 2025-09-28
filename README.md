@@ -43,6 +43,7 @@ Set to `1` for quick testing (forces rotation on first error).
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--chain-name` | Enable chain-registry endpoint discovery | (empty) |
+| `--chain-registry-path` | Path to local chain-registry clone | `./chain-registry` |
 | `--listen-address` | Override listen port/address (e.g. `:26647`) | value from config `port` |
 | `--scrape-interval` | Scrape interval (`30s`, `1m`, `5m`, etc.) | `10m` |
 
@@ -53,6 +54,7 @@ export COSMOS_EXPORTER_MAX_RPC_ERRORS=2
 ./build/cosmos_exporter start \
   --home ~/.cosmos-exporter \
   --chain-name xpla \
+  --chain-registry-path ./chain-registry \
   --listen-address :26647 \
   --scrape-interval 30s
 ```
@@ -131,4 +133,39 @@ git submodule deinit -f chain-registry
 git rm -f chain-registry
 rm -rf .git/modules/chain-registry
 git commit -m "Remove chain-registry submodule"
+```
+
+## Systemd Service Example
+Create `/etc/systemd/system/cosmos-exporter-xpla.service`:
+```ini
+[Unit]
+Description=Cosmos Exporter (XPLA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cosmos-exporter
+ExecStart=/opt/cosmos-exporter/build/cosmos_exporter start \\
+  --home /opt/cosmos-exporter/.xpla-exporter \\
+  --chain-name xpla \\
+  --chain-registry-path /opt/cosmos-exporter/chain-registry \\
+  --listen-address :26647 \\
+  --scrape-interval 1m
+Environment=COSMOS_EXPORTER_MAX_GRPC_ERRORS=3
+Environment=COSMOS_EXPORTER_MAX_RPC_ERRORS=3
+Restart=on-failure
+RestartSec=5
+User=cosmos
+Group=cosmos
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now cosmos-exporter-xpla
+sudo systemctl status cosmos-exporter-xpla --no-pager
 ```

@@ -30,6 +30,7 @@ var (
 func init() {
 	rootCmd.AddCommand(startCmd)
 	startCmd.Flags().String("chain-name", "", "Optional chain-registry chain name for fallback RPC/GRPC endpoints")
+	startCmd.Flags().String("chain-registry-path", "./chain-registry", "Path to local chain-registry root directory")
 	startCmd.Flags().String("listen-address", "", "Optional listen address (e.g. :26647) overriding config.Port")
 	startCmd.Flags().String("scrape-interval", "10m", "Scrape interval (e.g. 30s, 1m, 5m)")
 }
@@ -49,6 +50,7 @@ var startCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		chainName, _ := cmd.Flags().GetString("chain-name")
+		registryPath, _ := cmd.Flags().GetString("chain-registry-path")
 		listenAddrFlag, _ := cmd.Flags().GetString("listen-address")
 		scrapeIntervalStr, _ := cmd.Flags().GetString("scrape-interval")
 		scrapeInterval, err := time.ParseDuration(scrapeIntervalStr)
@@ -78,9 +80,8 @@ var startCmd = &cobra.Command{
 		}
 
 		if chainName != "" {
-			// attempt to load from local chain-registry folder (assume repo root = cwd)
-			cwd, _ := filepath.Abs(".")
-			chainData, err := registry.LoadChainRegistryChain(cwd, chainName)
+			base, _ := filepath.Abs(registryPath)
+			chainData, err := registry.LoadChainRegistryChain(base, chainName)
 			if err == nil {
 				for _, r := range chainData.APIs.GRPC {
 					if r.Address != "" {
@@ -93,7 +94,7 @@ var startCmd = &cobra.Command{
 					}
 				}
 			} else {
-				log.Printf("chain registry load failed chain=%s err=%v", chainName, err)
+				log.Printf("chain registry load failed path=%s chain=%s err=%v", base, chainName, err)
 			}
 		}
 
