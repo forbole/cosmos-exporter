@@ -93,3 +93,42 @@ node:
  grpc: "localhost:9090"
  secure: false
 ```
+
+## Chain Registry Submodule
+This repository uses the official `cosmos/chain-registry` as a Git submodule (directory: `chain-registry`).
+
+### First Clone
+```bash
+git clone <your-fork-or-repo>
+cd cosmos-exporter
+git submodule update --init --recursive
+```
+
+### Update to Latest Registry
+```bash
+git submodule update --remote --merge chain-registry
+git commit -am "Update chain-registry submodule"
+```
+
+### Shallow Clone (already configured)
+The submodule was added with `--depth 1` to save time/space. To deepen later:
+```bash
+cd chain-registry
+git fetch --unshallow || true
+```
+
+### Sparse Checkout (optional)
+If you only need a few chains (example: xpla, cosmoshub):
+```bash
+cd chain-registry
+git sparse-checkout init --cone
+git sparse-checkout set xpla cosmoshub
+```
+
+### Removing the Submodule (if ever needed)
+```bash
+git submodule deinit -f chain-registry
+git rm -f chain-registry
+rm -rf .git/modules/chain-registry
+git commit -m "Remove chain-registry submodule"
+```
