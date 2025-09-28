@@ -30,6 +30,7 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&homeDir, "home", "", "Directory for config and data (default is $HOME/.cosmos_exporter)")
+	rootCmd.PersistentFlags().String("chain-name", "", "Optional chain-registry chain name for fallback RPC/GRPC endpoints")
 }
 
 // initConfig reads in config file and ENV variables if set.
