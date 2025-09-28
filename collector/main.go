@@ -1,21 +1,21 @@
 package collector
 
 import (
-    "context"
-    "log"
-    "math/rand"
-    "strings"
-    "time"
-	"sync"
+	"context"
+	"log"
+	"math/rand"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 
-    cmthttp "github.com/cometbft/cometbft/rpc/client/http"
-    querytypes "github.com/cosmos/cosmos-sdk/types/query"
-    banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-    minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
-    stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-    types "github.com/forbole/cosmos-exporter/types"
+	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
+	querytypes "github.com/cosmos/cosmos-sdk/types/query"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	types "github.com/forbole/cosmos-exporter/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -29,52 +29,54 @@ const (
 
 // CosmosSDKCollector holds state for metrics collection including runtime failover fields
 type CosmosSDKCollector struct {
-    grpcConn         *grpc.ClientConn
-    valAddress       string
-    accAddresses     []string
-    chainID          string
-    lastGoodChainID  string
-    denomMetadata    map[string]types.DenomMetadata
-    defaultMintDenom string
-    defaultBondDenom string
-    sdkVersion       SDKVersion
+	grpcConn         *grpc.ClientConn
+	valAddress       string
+	accAddresses     []string
+	chainID          string
+	lastGoodChainID  string
+	denomMetadata    map[string]types.DenomMetadata
+	defaultMintDenom string
+	defaultBondDenom string
+	sdkVersion       SDKVersion
 
-    // vote tracking state
-    voteMissCounts  map[string]int       // key: proposalID|address
-    lastVoteStatus  map[string]float64   // last emitted value
-    proposalAllMiss map[uint64]int       // consecutive scrapes with no votes for a proposal
-    stateMu         sync.Mutex
+	// vote tracking state
+	voteMissCounts  map[string]int     // key: proposalID|address
+	lastVoteStatus  map[string]float64 // last emitted value
+	proposalAllMiss map[uint64]int     // consecutive scrapes with no votes for a proposal
+	stateMu         sync.Mutex
 
-    // runtime endpoint failover (future use)
-    grpcEndpoints   []string
-    grpcIndex       int
-    grpcErrorStreak int
-    maxGRPCErrors   int
-    rpcEndpoints    []string
-    rpcIndex        int
-    rpcErrorStreak  int
-    maxRPCErrors    int
-    rotationMu      sync.Mutex
+	// runtime endpoint failover (future use)
+	grpcEndpoints   []string
+	grpcIndex       int
+	grpcErrorStreak int
+	maxGRPCErrors   int
+	rpcEndpoints    []string
+	rpcIndex        int
+	rpcErrorStreak  int
+	maxRPCErrors    int
+	rotationMu      sync.Mutex
 }
 
 // detectSDKVersion simplified: attempt staking params; if succeeds assume current
 func detectSDKVersion(grpcConn *grpc.ClientConn, rpcConn string) SDKVersion {
-    stakingClient := stakingtypes.NewQueryClient(grpcConn)
-    ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-    defer cancel()
-    if res, err := stakingClient.Params(ctx, &stakingtypes.QueryParamsRequest{}); err == nil && res != nil {
-        if strings.Contains(res.String(), "cosmos.staking.v1beta1") {
-            log.Printf("Detected current SDK version (staking params present)")
-            return SDKVersionCurrent
-        }
-    }
-    log.Printf("Assuming current SDK version (simplified)")
-    return SDKVersionCurrent
+	stakingClient := stakingtypes.NewQueryClient(grpcConn)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if res, err := stakingClient.Params(ctx, &stakingtypes.QueryParamsRequest{}); err == nil && res != nil {
+		if strings.Contains(res.String(), "cosmos.staking.v1beta1") {
+			log.Printf("Detected current SDK version (staking params present)")
+			return SDKVersionCurrent
+		}
+	}
+	log.Printf("Assuming current SDK version (simplified)")
+	return SDKVersionCurrent
 }
 
 // recordGRPCError increments error streak and rotates endpoint if threshold exceeded
 func (c *CosmosSDKCollector) recordGRPCError(err error) {
-	if err == nil { return }
+	if err == nil {
+		return
+	}
 	c.rotationMu.Lock()
 	defer c.rotationMu.Unlock()
 	c.grpcErrorStreak++
@@ -92,7 +94,9 @@ func (c *CosmosSDKCollector) recordGRPCError(err error) {
 			log.Printf("[gRPC] rotation dial failed endpoint=%s err=%v (keeping old connection)", newEp, dialErr)
 			c.grpcIndex = oldIdx
 		} else {
-			if c.grpcConn != nil { _ = c.grpcConn.Close() }
+			if c.grpcConn != nil {
+				_ = c.grpcConn.Close()
+			}
 			c.grpcConn = conn
 			c.grpcErrorStreak = 0
 		}
@@ -101,13 +105,18 @@ func (c *CosmosSDKCollector) recordGRPCError(err error) {
 
 // recordGRPCSuccess resets error streak on success
 func (c *CosmosSDKCollector) recordGRPCSuccess() {
-	c.rotationMu.Lock(); c.grpcErrorStreak = 0; c.rotationMu.Unlock()
+	c.rotationMu.Lock()
+	c.grpcErrorStreak = 0
+	c.rotationMu.Unlock()
 }
 
 // recordRPCError increments RPC error streak and rotates selected RPC endpoint (chainID refresh uses this)
 func (c *CosmosSDKCollector) recordRPCError(err error) {
-	if err == nil { return }
-	c.rotationMu.Lock(); defer c.rotationMu.Unlock()
+	if err == nil {
+		return
+	}
+	c.rotationMu.Lock()
+	defer c.rotationMu.Unlock()
 	c.rpcErrorStreak++
 	if c.rpcErrorStreak >= c.maxRPCErrors && len(c.rpcEndpoints) > 1 {
 		oldIdx := c.rpcIndex
@@ -120,8 +129,11 @@ func (c *CosmosSDKCollector) recordRPCError(err error) {
 }
 
 func (c *CosmosSDKCollector) currentRPC() string {
-	c.rotationMu.Lock(); defer c.rotationMu.Unlock()
-	if len(c.rpcEndpoints) == 0 { return "" }
+	c.rotationMu.Lock()
+	defer c.rotationMu.Unlock()
+	if len(c.rpcEndpoints) == 0 {
+		return ""
+	}
 	return c.rpcEndpoints[c.rpcIndex]
 }
 
@@ -164,14 +176,27 @@ func NewCosmosSDKCollector(grpcConn *grpc.ClientConn, rpcConn string, valAddress
 
 	// rotation thresholds (env override)
 	maxGRPC := 3
-	if v := os.Getenv("COSMOS_EXPORTER_MAX_GRPC_ERRORS"); v != "" { if n, e := strconv.Atoi(v); e == nil && n > 0 { maxGRPC = n } }
+	if v := os.Getenv("COSMOS_EXPORTER_MAX_GRPC_ERRORS"); v != "" {
+		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+			maxGRPC = n
+		}
+	}
 	maxRPC := 3
-	if v := os.Getenv("COSMOS_EXPORTER_MAX_RPC_ERRORS"); v != "" { if n, e := strconv.Atoi(v); e == nil && n > 0 { maxRPC = n } }
+	if v := os.Getenv("COSMOS_EXPORTER_MAX_RPC_ERRORS"); v != "" {
+		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+			maxRPC = n
+		}
+	}
 
 	return CosmosSDKCollector{
-		grpcConn:         grpcConn,
-		chainID:          chainID,
-		lastGoodChainID:  func() string { if chainID != "unknown-chain" { return chainID } ; return "" }(),
+		grpcConn: grpcConn,
+		chainID:  chainID,
+		lastGoodChainID: func() string {
+			if chainID != "unknown-chain" {
+				return chainID
+			}
+			return ""
+		}(),
 		valAddress:       valAddress,
 		accAddresses:     accAddresses,
 		denomMetadata:    denomsMetadata,

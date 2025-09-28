@@ -1,20 +1,20 @@
 package cmd
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
-	"context"
 
 	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/forbole/cosmos-exporter/collector"
 	"github.com/forbole/cosmos-exporter/registry"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -70,16 +70,28 @@ var startCmd = &cobra.Command{
 		candidateRPC := []string{}
 
 		// precedence: config first
-		if config.Node.GRPC != "" { candidateGRPC = append(candidateGRPC, config.Node.GRPC) }
-		if config.Node.RPC != "" { candidateRPC = append(candidateRPC, config.Node.RPC) }
+		if config.Node.GRPC != "" {
+			candidateGRPC = append(candidateGRPC, config.Node.GRPC)
+		}
+		if config.Node.RPC != "" {
+			candidateRPC = append(candidateRPC, config.Node.RPC)
+		}
 
 		if chainName != "" {
 			// attempt to load from local chain-registry folder (assume repo root = cwd)
 			cwd, _ := filepath.Abs(".")
 			chainData, err := registry.LoadChainRegistryChain(cwd, chainName)
 			if err == nil {
-				for _, r := range chainData.APIs.GRPC { if r.Address != "" { candidateGRPC = append(candidateGRPC, r.Address) } }
-				for _, r := range chainData.APIs.RPC { if r.Address != "" { candidateRPC = append(candidateRPC, r.Address) } }
+				for _, r := range chainData.APIs.GRPC {
+					if r.Address != "" {
+						candidateGRPC = append(candidateGRPC, r.Address)
+					}
+				}
+				for _, r := range chainData.APIs.RPC {
+					if r.Address != "" {
+						candidateRPC = append(candidateRPC, r.Address)
+					}
+				}
 			} else {
 				log.Printf("chain registry load failed chain=%s err=%v", chainName, err)
 			}
@@ -90,8 +102,12 @@ var startCmd = &cobra.Command{
 			out := []string{}
 			for _, v := range in {
 				v = strings.TrimSpace(v)
-				if v == "" { continue }
-				if _, ok := m[v]; ok { continue }
+				if v == "" {
+					continue
+				}
+				if _, ok := m[v]; ok {
+					continue
+				}
 				m[v] = struct{}{}
 				out = append(out, v)
 			}
@@ -126,11 +142,15 @@ var startCmd = &cobra.Command{
 			log.Printf("[gRPC] selected endpoint: %s", addr)
 			break
 		}
-		if grpcConn == nil { return fmt.Errorf("all gRPC endpoints (dial+health) failed after %d attempts", len(candidateGRPC)) }
+		if grpcConn == nil {
+			return fmt.Errorf("all gRPC endpoints (dial+health) failed after %d attempts", len(candidateGRPC))
+		}
 		defer grpcConn.Close()
 
 		selectedRPC := ""
-		if len(candidateRPC) == 0 { return fmt.Errorf("no RPC endpoints available (config + registry)") }
+		if len(candidateRPC) == 0 {
+			return fmt.Errorf("no RPC endpoints available (config + registry)")
+		}
 		// Probe RPC endpoints sequentially with a light status call
 		for i, r := range candidateRPC {
 			log.Printf("[RPC] probing endpoint (%d/%d): %s", i+1, len(candidateRPC), r)
@@ -150,7 +170,9 @@ var startCmd = &cobra.Command{
 			log.Printf("[RPC] selected endpoint: %s", r)
 			break
 		}
-		if selectedRPC == "" { return fmt.Errorf("all RPC endpoints failed after %d attempts", len(candidateRPC)) }
+		if selectedRPC == "" {
+			return fmt.Errorf("all RPC endpoints failed after %d attempts", len(candidateRPC))
+		}
 
 		cosmosSDKCollector := collector.NewCosmosSDKCollector(
 			grpcConn,
@@ -169,7 +191,9 @@ var startCmd = &cobra.Command{
 		}()
 		http.Handle("/metrics", promhttp.Handler())
 		listenAddr := config.Port
-		if listenAddrFlag != "" { listenAddr = listenAddrFlag }
+		if listenAddrFlag != "" {
+			listenAddr = listenAddrFlag
+		}
 		log.Printf("Start listening on %s (scrape interval=%s gRPC=%s RPC=%s)", listenAddr, scrapeInterval, selectedGRPCEndpoint, selectedRPC)
 		if err := http.ListenAndServe(listenAddr, nil); err != nil {
 			return err

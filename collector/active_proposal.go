@@ -5,9 +5,9 @@ import (
 	"log"
 	"math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
-	"strings"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
@@ -78,7 +78,9 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
 		log.Print(err)
 		return
-	} else { collector.recordGRPCSuccess() }
+	} else {
+		collector.recordGRPCSuccess()
+	}
 
 	// We no longer blindly delete vote gauges to preserve continuity; only delete/overwrite active proposals after logic.
 
@@ -89,7 +91,9 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 	for key, val := range collector.lastVoteStatus {
 		// key format: proposalID|address
 		sep := strings.IndexByte(key, '|')
-		if sep <= 0 { continue }
+		if sep <= 0 {
+			continue
+		}
 		pid := key[:sep]
 		addr := key[sep+1:]
 		VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, pid).Set(val)
@@ -114,7 +118,7 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		fallbackExecuted := false
 		for {
 			var res *v1.QueryVotesResponse
-				err := retry("Votes", func() error {
+			err := retry("Votes", func() error {
 				ctx, cancel := context.WithTimeout(context.Background(), bulkPageTimeout)
 				defer cancel()
 				var innerErr error
@@ -172,126 +176,126 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 			nextKey = res.Pagination.NextKey
 		}
 
-        if !fallbackExecuted {
-				// Two-phase verification: first pass collects addresses with NotFound, second pass re-checks before setting 0
-				var firstNotFound []string
-				var firstNFMu sync.Mutex
-				var verifyWg sync.WaitGroup
-				for _, address := range collector.accAddresses {
-					if _, ok := votesMap[address]; ok {
-						VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(1)
-						collector.stateMu.Lock()
-						collector.lastVoteStatus[strconv.FormatUint(proposal.Id,10)+"|"+address] = 1
-						collector.voteMissCounts[strconv.FormatUint(proposal.Id,10)+"|"+address] = 0
-						collector.stateMu.Unlock()
-						proposalHadAnyVote = true
-						continue
-					}
-					verifyWg.Add(1)
-					go func(address string) {
-						defer verifyWg.Done()
-						var singleErr error
-						retry("VoteVerify1", func() error {
-							ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
-							defer cancelVote()
-							_, singleErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
-							return singleErr
-						})
-						if singleErr != nil {
-							st, ok := status.FromError(singleErr)
-							if ok && st.Code() == codes.NotFound {
-								// collect for second confirmation
-								firstNFMu.Lock()
-								firstNotFound = append(firstNotFound, address)
-								firstNFMu.Unlock()
-								return
-							}
-							ErrorGauge.WithLabelValues("tendermint_active_proposals_vote_status").Inc()
-							log.Printf("verify1 vote query error proposal_id=%d address=%s: %v", proposal.Id, address, singleErr)
+		if !fallbackExecuted {
+			// Two-phase verification: first pass collects addresses with NotFound, second pass re-checks before setting 0
+			var firstNotFound []string
+			var firstNFMu sync.Mutex
+			var verifyWg sync.WaitGroup
+			for _, address := range collector.accAddresses {
+				if _, ok := votesMap[address]; ok {
+					VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(1)
+					collector.stateMu.Lock()
+					collector.lastVoteStatus[strconv.FormatUint(proposal.Id, 10)+"|"+address] = 1
+					collector.voteMissCounts[strconv.FormatUint(proposal.Id, 10)+"|"+address] = 0
+					collector.stateMu.Unlock()
+					proposalHadAnyVote = true
+					continue
+				}
+				verifyWg.Add(1)
+				go func(address string) {
+					defer verifyWg.Done()
+					var singleErr error
+					retry("VoteVerify1", func() error {
+						ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
+						defer cancelVote()
+						_, singleErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
+						return singleErr
+					})
+					if singleErr != nil {
+						st, ok := status.FromError(singleErr)
+						if ok && st.Code() == codes.NotFound {
+							// collect for second confirmation
+							firstNFMu.Lock()
+							firstNotFound = append(firstNotFound, address)
+							firstNFMu.Unlock()
 							return
 						}
-						VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(1)
-						collector.stateMu.Lock()
-						collector.lastVoteStatus[strconv.FormatUint(proposal.Id,10)+"|"+address] = 1
-						collector.voteMissCounts[strconv.FormatUint(proposal.Id,10)+"|"+address] = 0
-						collector.stateMu.Unlock()
-					}(address)
-				}
-				verifyWg.Wait()
+						ErrorGauge.WithLabelValues("tendermint_active_proposals_vote_status").Inc()
+						log.Printf("verify1 vote query error proposal_id=%d address=%s: %v", proposal.Id, address, singleErr)
+						return
+					}
+					VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(1)
+					collector.stateMu.Lock()
+					collector.lastVoteStatus[strconv.FormatUint(proposal.Id, 10)+"|"+address] = 1
+					collector.voteMissCounts[strconv.FormatUint(proposal.Id, 10)+"|"+address] = 0
+					collector.stateMu.Unlock()
+				}(address)
+			}
+			verifyWg.Wait()
 
-				if len(firstNotFound) > 0 {
-					// small delay before second confirmation to mitigate race with just-submitted votes
-					time.Sleep(400 * time.Millisecond)
-					var secondWg sync.WaitGroup
-					for _, address := range firstNotFound {
-						addr := address
-						secondWg.Add(1)
-						go func() {
-							defer secondWg.Done()
-							var secondErr error
-							retry("VoteVerify2", func() error {
-								ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
-								defer cancelVote()
-								_, secondErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: addr})
-								return secondErr
-							})
-							if secondErr != nil {
-								st, ok := status.FromError(secondErr)
-								if ok && st.Code() == codes.NotFound {
-									// multi-scrape confirmation: increment miss count; only set 0 if >=2 consecutive scrapes missing
-									collector.stateMu.Lock()
-									key := strconv.FormatUint(proposal.Id,10)+"|"+addr
-									collector.voteMissCounts[key]++
-									misses := collector.voteMissCounts[key]
-									if misses >= 2 {
-										VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, strconv.FormatUint(proposal.Id, 10)).Set(0)
-										collector.lastVoteStatus[key] = 0
-											log.Printf("confirmed zero vote proposal_id=%d address=%s after %d consecutive misses", proposal.Id, addr, misses)
-									} else {
-										// retain previous gauge (already emitted earlier) until confirmed second miss
-										log.Printf("deferring zero until second consecutive miss proposal_id=%d address=%s", proposal.Id, addr)
-									}
-									collector.stateMu.Unlock()
-									return
+			if len(firstNotFound) > 0 {
+				// small delay before second confirmation to mitigate race with just-submitted votes
+				time.Sleep(400 * time.Millisecond)
+				var secondWg sync.WaitGroup
+				for _, address := range firstNotFound {
+					addr := address
+					secondWg.Add(1)
+					go func() {
+						defer secondWg.Done()
+						var secondErr error
+						retry("VoteVerify2", func() error {
+							ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
+							defer cancelVote()
+							_, secondErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: addr})
+							return secondErr
+						})
+						if secondErr != nil {
+							st, ok := status.FromError(secondErr)
+							if ok && st.Code() == codes.NotFound {
+								// multi-scrape confirmation: increment miss count; only set 0 if >=2 consecutive scrapes missing
+								collector.stateMu.Lock()
+								key := strconv.FormatUint(proposal.Id, 10) + "|" + addr
+								collector.voteMissCounts[key]++
+								misses := collector.voteMissCounts[key]
+								if misses >= 2 {
+									VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, strconv.FormatUint(proposal.Id, 10)).Set(0)
+									collector.lastVoteStatus[key] = 0
+									log.Printf("confirmed zero vote proposal_id=%d address=%s after %d consecutive misses", proposal.Id, addr, misses)
+								} else {
+									// retain previous gauge (already emitted earlier) until confirmed second miss
+									log.Printf("deferring zero until second consecutive miss proposal_id=%d address=%s", proposal.Id, addr)
 								}
-								// still uncertain; log and skip setting 0
-								ErrorGauge.WithLabelValues("tendermint_active_proposals_vote_status").Inc()
-								log.Printf("verify2 uncertain proposal_id=%d address=%s err=%v", proposal.Id, addr, secondErr)
+								collector.stateMu.Unlock()
 								return
 							}
-							// vote found on second attempt -> set 1
-							VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, strconv.FormatUint(proposal.Id, 10)).Set(1)
-							collector.stateMu.Lock()
-							key := strconv.FormatUint(proposal.Id,10)+"|"+addr
-							collector.lastVoteStatus[key] = 1
-							collector.voteMissCounts[key] = 0
-							collector.stateMu.Unlock()
-						}()
-					}
-					secondWg.Wait()
+							// still uncertain; log and skip setting 0
+							ErrorGauge.WithLabelValues("tendermint_active_proposals_vote_status").Inc()
+							log.Printf("verify2 uncertain proposal_id=%d address=%s err=%v", proposal.Id, addr, secondErr)
+							return
+						}
+						// vote found on second attempt -> set 1
+						VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, strconv.FormatUint(proposal.Id, 10)).Set(1)
+						collector.stateMu.Lock()
+						key := strconv.FormatUint(proposal.Id, 10) + "|" + addr
+						collector.lastVoteStatus[key] = 1
+						collector.voteMissCounts[key] = 0
+						collector.stateMu.Unlock()
+					}()
 				}
-				// After per-address processing, handle proposal-level all-miss heuristic
-				collector.stateMu.Lock()
-				if !proposalHadAnyVote {
-					collector.proposalAllMiss[proposal.Id]++
-					pm := collector.proposalAllMiss[proposal.Id]
-					if pm == 1 {
-						log.Printf("proposal %d had no detected votes this scrape; waiting for second consecutive confirmation before zeroing all", proposal.Id)
-					} else if pm >= 2 {
-						// Second consecutive full-miss: ensure any addresses not explicitly set get zeroed now
-						for _, addr := range collector.accAddresses {
-							key := strconv.FormatUint(proposal.Id,10)+"|"+addr
-							if _, had := collector.lastVoteStatus[key]; !had || collector.lastVoteStatus[key] != 1 {
-								VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, strconv.FormatUint(proposal.Id, 10)).Set(0)
-								collector.lastVoteStatus[key] = 0
-							}
+				secondWg.Wait()
+			}
+			// After per-address processing, handle proposal-level all-miss heuristic
+			collector.stateMu.Lock()
+			if !proposalHadAnyVote {
+				collector.proposalAllMiss[proposal.Id]++
+				pm := collector.proposalAllMiss[proposal.Id]
+				if pm == 1 {
+					log.Printf("proposal %d had no detected votes this scrape; waiting for second consecutive confirmation before zeroing all", proposal.Id)
+				} else if pm >= 2 {
+					// Second consecutive full-miss: ensure any addresses not explicitly set get zeroed now
+					for _, addr := range collector.accAddresses {
+						key := strconv.FormatUint(proposal.Id, 10) + "|" + addr
+						if _, had := collector.lastVoteStatus[key]; !had || collector.lastVoteStatus[key] != 1 {
+							VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, strconv.FormatUint(proposal.Id, 10)).Set(0)
+							collector.lastVoteStatus[key] = 0
 						}
 					}
-				} else {
-					collector.proposalAllMiss[proposal.Id] = 0
 				}
-				collector.stateMu.Unlock()
+			} else {
+				collector.proposalAllMiss[proposal.Id] = 0
 			}
+			collector.stateMu.Unlock()
+		}
 	}
 
 	for key, total := range countProposalType {
@@ -300,14 +304,20 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 
 	// Prune stale proposal state (proposals no longer in voting period)
 	activeSet := make(map[uint64]struct{})
-	for _, p := range govRes.Proposals { activeSet[p.Id] = struct{}{} }
+	for _, p := range govRes.Proposals {
+		activeSet[p.Id] = struct{}{}
+	}
 	collector.stateMu.Lock()
 	for k := range collector.lastVoteStatus {
 		sep := strings.IndexByte(k, '|')
-		if sep <= 0 { continue }
+		if sep <= 0 {
+			continue
+		}
 		pidStr := k[:sep]
 		pid, err := strconv.ParseUint(pidStr, 10, 64)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		if _, ok := activeSet[pid]; !ok {
 			delete(collector.lastVoteStatus, k)
 			delete(collector.voteMissCounts, k)
