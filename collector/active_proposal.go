@@ -11,6 +11,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/types/query"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	v1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -66,6 +67,7 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		}
 	}
 
+	// Try v1 first, fall back to v1beta1 if the service is not implemented
 	govClient := v1.NewQueryClient(collector.grpcConn)
 	govRes, err := govClient.Proposals(
 		context.Background(),
@@ -73,6 +75,16 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 			ProposalStatus: v1.StatusVotingPeriod,
 		},
 	)
+
+	// Check if error is Unimplemented and fall back to v1beta1
+	st, isGrpcErr := status.FromError(err)
+	useBeta1 := false
+	if isGrpcErr && st.Code() == codes.Unimplemented {
+		log.Printf("gov v1 not implemented, falling back to v1beta1")
+		useBeta1 = true
+		err = nil // Clear error to proceed with beta1
+	}
+
 	if err != nil {
 		collector.recordGRPCError(err)
 		ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
@@ -80,6 +92,41 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		return
 	} else {
 		collector.recordGRPCSuccess()
+	}
+
+	// If we need to use beta1, query with beta1 client
+	var proposals []*v1.Proposal
+	if useBeta1 {
+		govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
+		betaRes, betaErr := govBetaClient.Proposals(
+			context.Background(),
+			&v1beta1.QueryProposalsRequest{
+				ProposalStatus: v1beta1.StatusVotingPeriod,
+			},
+		)
+		if betaErr != nil {
+			// Check if it's a transient error that should be retried
+			betaSt, isBetaGrpcErr := status.FromError(betaErr)
+			if isBetaGrpcErr {
+				// For Unknown errors (like HTTP 520), don't treat as unrecoverable
+				// It could be a temporary endpoint issue
+				if betaSt.Code() != codes.Unknown {
+					collector.recordGRPCError(betaErr)
+					ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
+					log.Printf("v1beta1 query failed with non-retryable error: %v", betaErr)
+					return
+				}
+			}
+			// For Unknown or other recoverable errors, log and continue
+			collector.recordGRPCError(betaErr)
+			ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
+			log.Printf("v1beta1 query failed (possible endpoint issue): %v", betaErr)
+			return
+		}
+		// Convert beta1 proposals to v1 proposals for unified processing
+		proposals = convertBeta1ProposalsToV1(betaRes.Proposals)
+	} else {
+		proposals = govRes.Proposals
 	}
 
 	// We no longer blindly delete vote gauges to preserve continuity; only delete/overwrite active proposals after logic.
@@ -102,7 +149,7 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 
 	// Count proposals base on TypeUrl
 	countProposalType := make(map[string]float64)
-	for _, proposal := range govRes.Proposals {
+	for _, proposal := range proposals {
 		msgTypeUrl := "unknown"
 		if proposal.Messages != nil && len(proposal.Messages) > 0 {
 			msgTypeUrl = proposal.Messages[0].TypeUrl
@@ -117,20 +164,67 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		var nextKey []byte
 		fallbackExecuted := false
 		for {
-			var res *v1.QueryVotesResponse
-			err := retry("Votes", func() error {
-				ctx, cancel := context.WithTimeout(context.Background(), bulkPageTimeout)
-				defer cancel()
-				var innerErr error
-				res, innerErr = govClient.Votes(
-					ctx,
-					&v1.QueryVotesRequest{
-						ProposalId: proposal.Id,
-						Pagination: &query.PageRequest{Key: nextKey, Limit: 500},
-					},
-				)
-				return innerErr
-			})
+			var err error
+			if useBeta1 {
+				// Use beta1 client for votes
+				var betaRes *v1beta1.QueryVotesResponse
+				err = retry("VotesBeta1", func() error {
+					ctx, cancel := context.WithTimeout(context.Background(), bulkPageTimeout)
+					defer cancel()
+					var innerErr error
+					govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
+					betaRes, innerErr = govBetaClient.Votes(
+						ctx,
+						&v1beta1.QueryVotesRequest{
+							ProposalId: proposal.Id,
+							Pagination: &query.PageRequest{Key: nextKey, Limit: 500},
+						},
+					)
+					if innerErr == nil && betaRes != nil {
+						for _, vote := range betaRes.Votes {
+							votesMap[vote.Voter] = struct{}{}
+						}
+						if betaRes.Pagination != nil && len(betaRes.Pagination.NextKey) > 0 {
+							nextKey = betaRes.Pagination.NextKey
+						} else {
+							nextKey = nil
+						}
+					}
+					return innerErr
+				})
+				if nextKey == nil {
+					break
+				}
+			} else {
+				// Use v1 client for votes
+				var res *v1.QueryVotesResponse
+				err = retry("Votes", func() error {
+					ctx, cancel := context.WithTimeout(context.Background(), bulkPageTimeout)
+					defer cancel()
+					var innerErr error
+					res, innerErr = govClient.Votes(
+						ctx,
+						&v1.QueryVotesRequest{
+							ProposalId: proposal.Id,
+							Pagination: &query.PageRequest{Key: nextKey, Limit: 500},
+						},
+					)
+					if innerErr == nil && res != nil {
+						for _, vote := range res.Votes {
+							votesMap[vote.Voter] = struct{}{}
+						}
+						if res.Pagination != nil && len(res.Pagination.NextKey) > 0 {
+							nextKey = res.Pagination.NextKey
+						} else {
+							nextKey = nil
+						}
+					}
+					return innerErr
+				})
+				if nextKey == nil {
+					break
+				}
+			}
 			if err != nil {
 				collector.recordGRPCError(err)
 				// Fall back to single queries if bulk fetch fails once
@@ -145,7 +239,12 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 						retry("VoteFallback", func() error {
 							ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
 							defer cancelVote()
-							_, singleErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
+							if useBeta1 {
+								govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
+								_, singleErr = govBetaClient.Vote(ctxVote, &v1beta1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
+							} else {
+								_, singleErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
+							}
 							return singleErr
 						})
 						if singleErr != nil {
@@ -154,8 +253,11 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 								VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(0)
 								return
 							}
-							ErrorGauge.WithLabelValues("tendermint_active_proposals_vote_status").Inc()
+							// Log non-NotFound errors but don't increment error counter
+							// as this is a fallback scenario and already logged as an error
 							log.Printf("error querying vote (fallback) proposal_id=%d address=%s: %v", proposal.Id, address, singleErr)
+							// Still set 0 to indicate vote not found
+							VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(0)
 							return
 						}
 						VotedActiveProposalGauge.WithLabelValues(collector.chainID, address, strconv.FormatUint(proposal.Id, 10)).Set(1)
@@ -167,13 +269,6 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 			}
 
 			collector.recordGRPCSuccess()
-			for _, vote := range res.Votes {
-				votesMap[vote.Voter] = struct{}{}
-			}
-			if res.Pagination == nil || len(res.Pagination.NextKey) == 0 {
-				break
-			}
-			nextKey = res.Pagination.NextKey
 		}
 
 		if !fallbackExecuted {
@@ -198,7 +293,12 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 					retry("VoteVerify1", func() error {
 						ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
 						defer cancelVote()
-						_, singleErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
+						if useBeta1 {
+							govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
+							_, singleErr = govBetaClient.Vote(ctxVote, &v1beta1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
+						} else {
+							_, singleErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
+						}
 						return singleErr
 					})
 					if singleErr != nil {
@@ -210,7 +310,7 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 							firstNFMu.Unlock()
 							return
 						}
-						ErrorGauge.WithLabelValues("tendermint_active_proposals_vote_status").Inc()
+						// Log error but don't double-count
 						log.Printf("verify1 vote query error proposal_id=%d address=%s: %v", proposal.Id, address, singleErr)
 						return
 					}
@@ -236,7 +336,12 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 						retry("VoteVerify2", func() error {
 							ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
 							defer cancelVote()
-							_, secondErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: addr})
+							if useBeta1 {
+								govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
+								_, secondErr = govBetaClient.Vote(ctxVote, &v1beta1.QueryVoteRequest{ProposalId: proposal.Id, Voter: addr})
+							} else {
+								_, secondErr = govClient.Vote(ctxVote, &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: addr})
+							}
 							return secondErr
 						})
 						if secondErr != nil {
@@ -259,7 +364,6 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 								return
 							}
 							// still uncertain; log and skip setting 0
-							ErrorGauge.WithLabelValues("tendermint_active_proposals_vote_status").Inc()
 							log.Printf("verify2 uncertain proposal_id=%d address=%s err=%v", proposal.Id, addr, secondErr)
 							return
 						}
@@ -304,7 +408,7 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 
 	// Prune stale proposal state (proposals no longer in voting period)
 	activeSet := make(map[uint64]struct{})
-	for _, p := range govRes.Proposals {
+	for _, p := range proposals {
 		activeSet[p.Id] = struct{}{}
 	}
 	collector.stateMu.Lock()
@@ -329,4 +433,22 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		}
 	}
 	collector.stateMu.Unlock()
+}
+
+// convertBeta1ProposalsToV1 converts v1beta1 proposals to v1 proposals for unified processing
+func convertBeta1ProposalsToV1(betaProposals []v1beta1.Proposal) []*v1.Proposal {
+	v1Proposals := make([]*v1.Proposal, 0, len(betaProposals))
+	for _, bp := range betaProposals {
+		v1p := &v1.Proposal{
+			Id: bp.ProposalId,
+		}
+		// v1beta1 uses Content instead of Messages
+		// Convert single Content to Messages array format
+		if bp.Content != nil {
+			// bp.Content is already compatible with Messages field
+			v1p.Messages = append(v1p.Messages, bp.Content)
+		}
+		v1Proposals = append(v1Proposals, v1p)
+	}
+	return v1Proposals
 }

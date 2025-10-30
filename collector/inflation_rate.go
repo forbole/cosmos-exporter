@@ -40,10 +40,22 @@ func (collector *CosmosSDKCollector) collectInflationRateLegacy() {
 
 	// Calculate inflation rate by using annual provisions and total supply from bank module
 	// This is a simplified approach; chains might have custom inflation calculation
-	annualProvisions, err := annualProvisionsRes.AnnualProvisions.Float64()
-	if err != nil {
+	// Use panic recovery for type conversion issues
+	var annualProvisions float64
+	var convErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Recovered from panic converting AnnualProvisions (legacy): %v", r)
+			}
+		}()
+		// AnnualProvisions is a value type (LegacyDec), not a pointer
+		annualProvisions, convErr = annualProvisionsRes.AnnualProvisions.Float64()
+	}()
+	
+	if convErr != nil {
 		ErrorGauge.WithLabelValues("tendermint_inflation_rate").Inc()
-		log.Printf("Error parsing annual provisions (legacy): %v", err)
+		log.Printf("Error parsing annual provisions (legacy): %v", convErr)
 		return
 	}
 
@@ -89,7 +101,21 @@ func (collector *CosmosSDKCollector) collectInflationRateCurrent() {
 
 	annualProvisionsRes, err := mintClient.AnnualProvisions(ctx, &types.QueryAnnualProvisionsRequest{})
 	if err == nil && annualProvisionsRes != nil {
-		// Try to safely get the value as a string
+		// Safely try to convert using panic recovery
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Recovered from panic converting AnnualProvisions value: %v", r)
+				}
+			}()
+			// AnnualProvisions is a value type (LegacyDec), not a pointer
+			annualProvisions, convErr := annualProvisionsRes.AnnualProvisions.Float64()
+			if convErr == nil && annualProvisions > 0 {
+				InflationRate.WithLabelValues(collector.chainID).Set(annualProvisions)
+			}
+		}()
+		
+		// Also try string extraction as backup
 		valStr := annualProvisionsRes.String()
 		if strings.Contains(valStr, "annual_provisions:") {
 			val := extractFloatFromString(valStr, "annual_provisions")
@@ -100,9 +126,9 @@ func (collector *CosmosSDKCollector) collectInflationRateCurrent() {
 		}
 	}
 
-	// Last resort - set a default value
-	log.Print("Setting default inflation rate value due to v0.50.x compatibility issues")
-	InflationRate.WithLabelValues(collector.chainID).Set(0)
+	// If we couldn't get inflation data, just log and move on
+	// Don't set a default value as it would be misleading
+	log.Printf("Could not retrieve inflation rate for chain %s", collector.chainID)
 }
 
 // Helper function to extract float values from string representations

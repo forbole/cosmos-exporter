@@ -25,17 +25,23 @@ func (collector *CosmosSDKCollector) collectCirculatingSupplyLegacy() {
 		&banktypes.QuerySupplyOfRequest{Denom: collector.defaultMintDenom},
 	)
 	if err != nil {
+		collector.recordGRPCError(err)
 		ErrorGauge.WithLabelValues("tendermint_circulating_supply").Inc()
 		log.Print(err)
 		return
 	}
+	
+	collector.recordGRPCSuccess()
 
 	baseDenom, found := collector.denomMetadata[collector.defaultMintDenom]
+	var exponent int
 	if !found {
-		log.Print("No denom infos")
-		return
+		log.Printf("No denom metadata for %s, using default exponent 0", collector.defaultMintDenom)
+		exponent = 0
+	} else {
+		exponent = int(baseDenom.Exponent)
 	}
-	SupplyFromBaseToDisplay := float64(bankRes.Amount.Amount.Int64()) / math.Pow10(int(baseDenom.Exponent))
+	SupplyFromBaseToDisplay := float64(bankRes.Amount.Amount.Int64()) / math.Pow10(exponent)
 
 	CirculatingSupply.WithLabelValues(collector.chainID).Set(SupplyFromBaseToDisplay)
 }
@@ -48,15 +54,21 @@ func (collector *CosmosSDKCollector) collectCirculatingSupplyCurrent() {
 		&banktypes.QuerySupplyOfRequest{Denom: collector.defaultMintDenom},
 	)
 	if err != nil {
+		collector.recordGRPCError(err)
 		ErrorGauge.WithLabelValues("tendermint_circulating_supply").Inc()
 		log.Print(err)
 		return
 	}
 
+	collector.recordGRPCSuccess()
+
 	baseDenom, found := collector.denomMetadata[collector.defaultMintDenom]
+	var exponent int
 	if !found {
-		log.Print("No denom infos")
-		return
+		log.Printf("No denom metadata for %s, using default exponent 0", collector.defaultMintDenom)
+		exponent = 0
+	} else {
+		exponent = int(baseDenom.Exponent)
 	}
 
 	// Use string conversion to handle large token amounts safely
@@ -67,7 +79,7 @@ func (collector *CosmosSDKCollector) collectCirculatingSupplyCurrent() {
 		return
 	}
 
-	SupplyFromBaseToDisplay := supplyValue / math.Pow10(int(baseDenom.Exponent))
+	SupplyFromBaseToDisplay := supplyValue / math.Pow10(exponent)
 
 	CirculatingSupply.WithLabelValues(collector.chainID).Set(SupplyFromBaseToDisplay)
 }

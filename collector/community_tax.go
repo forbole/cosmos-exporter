@@ -14,10 +14,12 @@ func (collector *CosmosSDKCollector) CollectCommunityTax() {
 		&distributiontypes.QueryParamsRequest{},
 	)
 	if err != nil {
+		collector.recordGRPCError(err)
 		ErrorGauge.WithLabelValues("tendermint_community_tax_rate").Inc()
 		log.Print(err)
 		return
 	}
 
+	collector.recordGRPCSuccess()
 	CommunityTax.WithLabelValues(collector.chainID).Set(distributionRes.Params.CommunityTax.MustFloat64())
 }
