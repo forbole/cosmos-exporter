@@ -68,6 +68,9 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 	}
 
 	// Try v1 first, fall back to v1beta1 if the service is not implemented
+	// For atomone, the governance module uses atomone.gov instead of cosmos.gov
+	isAtomone := collector.chainID == "atomone-1" || collector.chainID == "atomone-testnet-1"
+
 	govClient := v1.NewQueryClient(collector.grpcConn)
 	govRes, err := govClient.Proposals(
 		context.Background(),
@@ -76,27 +79,80 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		},
 	)
 
-	// Check if error is Unimplemented and fall back to v1beta1
+	// Check if error is Unimplemented or "unknown service" and handle atomone case
 	st, isGrpcErr := status.FromError(err)
 	useBeta1 := false
-	if isGrpcErr && st.Code() == codes.Unimplemented {
-		log.Printf("gov v1 not implemented, falling back to v1beta1")
-		useBeta1 = true
-		err = nil // Clear error to proceed with beta1
+	useAtomoneGov := false
+
+	if isGrpcErr {
+		errMsg := st.Message()
+		// Check if it's an "unknown service" error for cosmos.gov on atomone
+		if isAtomone && (st.Code() == codes.Unimplemented || strings.Contains(errMsg, "unknown service cosmos.gov")) {
+			log.Printf("detected atomone chain with custom governance path, trying atomone.gov")
+			useAtomoneGov = true
+			err = nil // Clear error to proceed with atomone.gov
+		} else if st.Code() == codes.Unimplemented {
+			log.Printf("gov v1 not implemented, falling back to v1beta1")
+			useBeta1 = true
+			err = nil // Clear error to proceed with beta1
+		}
 	}
 
-	if err != nil {
+	if err != nil && !useAtomoneGov {
 		collector.recordGRPCError(err)
 		ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
 		log.Print(err)
 		return
-	} else {
+	} else if !useAtomoneGov {
 		collector.recordGRPCSuccess()
 	}
 
-	// If we need to use beta1, query with beta1 client
+	// Handle atomone's custom governance path or standard cosmos.gov
 	var proposals []*v1.Proposal
-	if useBeta1 {
+
+	if useAtomoneGov {
+		// Use invoker to call atomone.gov.v1.Query/Proposals
+		// The protobuf types are the same, just the service name differs
+		req := &v1.QueryProposalsRequest{
+			ProposalStatus: v1.StatusVotingPeriod,
+		}
+		res := &v1.QueryProposalsResponse{}
+
+		// Use Invoke with the atomone.gov service name
+		err = collector.grpcConn.Invoke(
+			context.Background(),
+			"/atomone.gov.v1.Query/Proposals",
+			req,
+			res,
+		)
+
+		if err != nil {
+			// Try v1beta1 for atomone
+			log.Printf("atomone.gov.v1 failed, trying atomone.gov.v1beta1: %v", err)
+			betaReq := &v1beta1.QueryProposalsRequest{
+				ProposalStatus: v1beta1.StatusVotingPeriod,
+			}
+			betaRes := &v1beta1.QueryProposalsResponse{}
+			err = collector.grpcConn.Invoke(
+				context.Background(),
+				"/atomone.gov.v1beta1.Query/Proposals",
+				betaReq,
+				betaRes,
+			)
+			if err != nil {
+				collector.recordGRPCError(err)
+				ErrorGauge.WithLabelValues("tendermint_active_proposals_total").Inc()
+				log.Printf("atomone.gov query failed: %v", err)
+				return
+			}
+			// Convert beta1 to v1 for unified processing
+			proposals = convertBeta1ProposalsToV1(betaRes.Proposals)
+			collector.recordGRPCSuccess()
+		} else {
+			proposals = res.Proposals
+			collector.recordGRPCSuccess()
+		}
+	} else if useBeta1 {
 		govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
 		betaRes, betaErr := govBetaClient.Proposals(
 			context.Background(),
@@ -151,7 +207,7 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 	countProposalType := make(map[string]float64)
 	for _, proposal := range proposals {
 		msgTypeUrl := "unknown"
-		if proposal.Messages != nil && len(proposal.Messages) > 0 {
+		if len(proposal.Messages) > 0 {
 			msgTypeUrl = proposal.Messages[0].TypeUrl
 		}
 		countProposalType[msgTypeUrl] += 1
@@ -165,7 +221,35 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		fallbackExecuted := false
 		for {
 			var err error
-			if useBeta1 {
+			if useAtomoneGov {
+				// Use Invoke for atomone.gov votes
+				var res *v1.QueryVotesResponse
+				err = retry("VotesAtomone", func() error {
+					ctx, cancel := context.WithTimeout(context.Background(), bulkPageTimeout)
+					defer cancel()
+					var innerErr error
+					req := &v1.QueryVotesRequest{
+						ProposalId: proposal.Id,
+						Pagination: &query.PageRequest{Key: nextKey, Limit: 500},
+					}
+					res = &v1.QueryVotesResponse{}
+					innerErr = collector.grpcConn.Invoke(ctx, "/atomone.gov.v1.Query/Votes", req, res)
+					if innerErr == nil && res != nil {
+						for _, vote := range res.Votes {
+							votesMap[vote.Voter] = struct{}{}
+						}
+						if res.Pagination != nil && len(res.Pagination.NextKey) > 0 {
+							nextKey = res.Pagination.NextKey
+						} else {
+							nextKey = nil
+						}
+					}
+					return innerErr
+				})
+				if nextKey == nil {
+					break
+				}
+			} else if useBeta1 {
 				// Use beta1 client for votes
 				var betaRes *v1beta1.QueryVotesResponse
 				err = retry("VotesBeta1", func() error {
@@ -239,7 +323,11 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 						retry("VoteFallback", func() error {
 							ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
 							defer cancelVote()
-							if useBeta1 {
+							if useAtomoneGov {
+								req := &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address}
+								res := &v1.QueryVoteResponse{}
+								singleErr = collector.grpcConn.Invoke(ctxVote, "/atomone.gov.v1.Query/Vote", req, res)
+							} else if useBeta1 {
 								govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
 								_, singleErr = govBetaClient.Vote(ctxVote, &v1beta1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
 							} else {
@@ -293,7 +381,11 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 					retry("VoteVerify1", func() error {
 						ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
 						defer cancelVote()
-						if useBeta1 {
+						if useAtomoneGov {
+							req := &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address}
+							res := &v1.QueryVoteResponse{}
+							singleErr = collector.grpcConn.Invoke(ctxVote, "/atomone.gov.v1.Query/Vote", req, res)
+						} else if useBeta1 {
 							govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
 							_, singleErr = govBetaClient.Vote(ctxVote, &v1beta1.QueryVoteRequest{ProposalId: proposal.Id, Voter: address})
 						} else {
@@ -336,7 +428,11 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 						retry("VoteVerify2", func() error {
 							ctxVote, cancelVote := context.WithTimeout(context.Background(), voteTimeout)
 							defer cancelVote()
-							if useBeta1 {
+							if useAtomoneGov {
+								req := &v1.QueryVoteRequest{ProposalId: proposal.Id, Voter: addr}
+								res := &v1.QueryVoteResponse{}
+								secondErr = collector.grpcConn.Invoke(ctxVote, "/atomone.gov.v1.Query/Vote", req, res)
+							} else if useBeta1 {
 								govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
 								_, secondErr = govBetaClient.Vote(ctxVote, &v1beta1.QueryVoteRequest{ProposalId: proposal.Id, Voter: addr})
 							} else {
