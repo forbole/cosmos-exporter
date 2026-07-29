@@ -21,6 +21,14 @@ var (
 		[]string{"chain_id", "voter_address", "proposal_id"},
 	)
 
+	ProposalResultGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "tendermint_governance_proposal_result",
+			Help: "Recently finalized governance proposal result (retained for 72 hours after voting ends)",
+		},
+		[]string{"chain_id", "proposal_id", "result", "proposal_type", "upgrade_name", "upgrade_height"},
+	)
+
 	AvailableBalanceGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "tendermint_available_balance",
@@ -162,6 +170,7 @@ func init() {
 	prometheus.MustRegister(
 		ActiveProposalGauge,
 		VotedActiveProposalGauge,
+		ProposalResultGauge,
 		AvailableBalanceGauge,
 		DelegatorRewardGauge,
 		DelegatorStakeGauge,
