@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func (collector *CosmosSDKCollector) CollectActiveProposal() {
@@ -529,6 +530,129 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 		}
 	}
 	collector.stateMu.Unlock()
+
+	collector.collectRecentProposalResults(govClient)
+}
+
+// collectRecentProposalResults exports outcomes for a bounded window so alerts
+// can distinguish a passed upgrade from a routine voting-period notification.
+// The window also makes a restarted exporter catch a result that finalized
+// while it was unavailable, without retaining unbounded historical series.
+func (collector *CosmosSDKCollector) collectRecentProposalResults(govClient v1.QueryClient) {
+	const resultRetention = 72 * time.Hour
+	cutoff := time.Now().Add(-resultRetention)
+	ProposalResultGauge.DeletePartialMatch(prometheus.Labels{"chain_id": collector.chainID})
+
+	results := []struct {
+		status v1.ProposalStatus
+		name   string
+	}{
+		{v1.StatusPassed, "passed"},
+		{v1.StatusRejected, "rejected"},
+		{v1.StatusFailed, "failed"},
+	}
+
+	for _, result := range results {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		response, err := govClient.Proposals(ctx, &v1.QueryProposalsRequest{
+			ProposalStatus: result.status,
+			Pagination:     &query.PageRequest{Limit: 100, Reverse: true},
+		})
+		cancel()
+		if err != nil {
+			// Some legacy chains have only v1beta1 governance. Active-vote
+			// collection already handles that fallback; do not let an optional
+			// result query create a false exporter failure.
+			log.Printf("recent governance results unavailable chain_id=%s status=%s: %v", collector.chainID, result.name, err)
+			continue
+		}
+
+		for _, proposal := range response.Proposals {
+			if proposal.VotingEndTime == nil || proposal.VotingEndTime.Before(cutoff) {
+				continue
+			}
+			proposalType, upgradeName, upgradeHeight := proposalResultLabels(proposal)
+			ProposalResultGauge.WithLabelValues(
+				collector.chainID,
+				strconv.FormatUint(proposal.Id, 10),
+				result.name,
+				proposalType,
+				upgradeName,
+				upgradeHeight,
+			).Set(1)
+		}
+	}
+}
+
+func proposalResultLabels(proposal *v1.Proposal) (proposalType, upgradeName, upgradeHeight string) {
+	proposalType = "unknown"
+	if len(proposal.Messages) == 0 {
+		return proposalType, "", ""
+	}
+
+	message := proposal.Messages[0]
+	proposalType = message.TypeUrl
+	if message.TypeUrl != "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade" {
+		return proposalType, "", ""
+	}
+
+	// MsgSoftwareUpgrade stores Plan as protobuf field 2. Decode only its name
+	// and height so the alert contains the concrete staging target without
+	// adding a dependency on a particular Cosmos SDK upgrade module version.
+	for raw := message.Value; len(raw) > 0; {
+		number, kind, n := protowire.ConsumeTag(raw)
+		if n < 0 {
+			break
+		}
+		raw = raw[n:]
+		if number == 2 && kind == protowire.BytesType {
+			plan, m := protowire.ConsumeBytes(raw)
+			if m < 0 {
+				break
+			}
+			upgradeName, upgradeHeight = decodeUpgradePlan(plan)
+			break
+		}
+		m := protowire.ConsumeFieldValue(number, kind, raw)
+		if m < 0 {
+			break
+		}
+		raw = raw[m:]
+	}
+	return proposalType, upgradeName, upgradeHeight
+}
+
+func decodeUpgradePlan(raw []byte) (name, height string) {
+	for len(raw) > 0 {
+		number, kind, n := protowire.ConsumeTag(raw)
+		if n < 0 {
+			break
+		}
+		raw = raw[n:]
+		switch {
+		case number == 1 && kind == protowire.BytesType:
+			value, m := protowire.ConsumeBytes(raw)
+			if m < 0 {
+				return name, height
+			}
+			name = string(value)
+			raw = raw[m:]
+		case number == 2 && kind == protowire.VarintType:
+			value, m := protowire.ConsumeVarint(raw)
+			if m < 0 {
+				return name, height
+			}
+			height = strconv.FormatUint(value, 10)
+			raw = raw[m:]
+		default:
+			m := protowire.ConsumeFieldValue(number, kind, raw)
+			if m < 0 {
+				return name, height
+			}
+			raw = raw[m:]
+		}
+	}
+	return name, height
 }
 
 // convertBeta1ProposalsToV1 converts v1beta1 proposals to v1 proposals for unified processing
@@ -536,7 +660,10 @@ func convertBeta1ProposalsToV1(betaProposals []v1beta1.Proposal) []*v1.Proposal 
 	v1Proposals := make([]*v1.Proposal, 0, len(betaProposals))
 	for _, bp := range betaProposals {
 		v1p := &v1.Proposal{
-			Id: bp.ProposalId,
+			Id:              bp.ProposalId,
+			Status:          v1.ProposalStatus(bp.Status),
+			VotingEndTime:   &bp.VotingEndTime,
+			VotingStartTime: &bp.VotingStartTime,
 		}
 		// v1beta1 uses Content instead of Messages
 		// Convert single Content to Messages array format
