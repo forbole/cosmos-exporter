@@ -531,43 +531,63 @@ func (collector *CosmosSDKCollector) CollectActiveProposal() {
 	}
 	collector.stateMu.Unlock()
 
-	collector.collectRecentProposalResults(govClient)
+	// Drop stale active-vote series once a proposal leaves voting period so
+	// finished proposals do not keep looking "active" in Prometheus.
+	collector.stateMu.Lock()
+	activeIDs := make(map[string]struct{}, len(activeSet))
+	for pid := range activeSet {
+		activeIDs[strconv.FormatUint(pid, 10)] = struct{}{}
+	}
+	collector.stateMu.Unlock()
+	VotedActiveProposalGauge.DeletePartialMatch(prometheus.Labels{"chain_id": collector.chainID})
+	collector.stateMu.Lock()
+	for key, val := range collector.lastVoteStatus {
+		sep := strings.IndexByte(key, '|')
+		if sep <= 0 {
+			continue
+		}
+		pid := key[:sep]
+		addr := key[sep+1:]
+		if _, ok := activeIDs[pid]; !ok {
+			continue
+		}
+		VotedActiveProposalGauge.WithLabelValues(collector.chainID, addr, pid).Set(val)
+	}
+	collector.stateMu.Unlock()
+
+	collector.collectRecentProposalResults(useAtomoneGov, useBeta1)
 }
+
 
 // collectRecentProposalResults exports outcomes for a bounded window so alerts
 // can distinguish a passed upgrade from a routine voting-period notification.
 // The window also makes a restarted exporter catch a result that finalized
 // while it was unavailable, without retaining unbounded historical series.
-func (collector *CosmosSDKCollector) collectRecentProposalResults(govClient v1.QueryClient) {
-	const resultRetention = 72 * time.Hour
+func (collector *CosmosSDKCollector) collectRecentProposalResults(useAtomoneGov, useBeta1 bool) {
+	// Keep finalized results long enough to stage upgrades after a weekend pass.
+	const resultRetention = 7 * 24 * time.Hour
 	cutoff := time.Now().Add(-resultRetention)
 	ProposalResultGauge.DeletePartialMatch(prometheus.Labels{"chain_id": collector.chainID})
 
 	results := []struct {
-		status v1.ProposalStatus
-		name   string
+		v1Status   v1.ProposalStatus
+		betaStatus v1beta1.ProposalStatus
+		name       string
 	}{
-		{v1.StatusPassed, "passed"},
-		{v1.StatusRejected, "rejected"},
-		{v1.StatusFailed, "failed"},
+		{v1.StatusPassed, v1beta1.StatusPassed, "passed"},
+		{v1.StatusRejected, v1beta1.StatusRejected, "rejected"},
+		{v1.StatusFailed, v1beta1.StatusFailed, "failed"},
 	}
 
 	for _, result := range results {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		response, err := govClient.Proposals(ctx, &v1.QueryProposalsRequest{
-			ProposalStatus: result.status,
-			Pagination:     &query.PageRequest{Limit: 100, Reverse: true},
-		})
-		cancel()
+		proposals, err := collector.queryRecentProposalsByStatus(result.v1Status, result.betaStatus, useAtomoneGov, useBeta1)
 		if err != nil {
-			// Some legacy chains have only v1beta1 governance. Active-vote
-			// collection already handles that fallback; do not let an optional
-			// result query create a false exporter failure.
+			// Optional path: never fail the whole scrape on result export.
 			log.Printf("recent governance results unavailable chain_id=%s status=%s: %v", collector.chainID, result.name, err)
 			continue
 		}
 
-		for _, proposal := range response.Proposals {
+		for _, proposal := range proposals {
 			if proposal.VotingEndTime == nil || proposal.VotingEndTime.Before(cutoff) {
 				continue
 			}
@@ -582,6 +602,55 @@ func (collector *CosmosSDKCollector) collectRecentProposalResults(govClient v1.Q
 			).Set(1)
 		}
 	}
+}
+
+func (collector *CosmosSDKCollector) queryRecentProposalsByStatus(
+	v1Status v1.ProposalStatus,
+	betaStatus v1beta1.ProposalStatus,
+	useAtomoneGov, useBeta1 bool,
+) ([]*v1.Proposal, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	page := &query.PageRequest{Limit: 100, Reverse: true}
+
+	if useAtomoneGov {
+		req := &v1.QueryProposalsRequest{ProposalStatus: v1Status, Pagination: page}
+		res := &v1.QueryProposalsResponse{}
+		err := collector.grpcConn.Invoke(ctx, "/atomone.gov.v1.Query/Proposals", req, res)
+		if err == nil {
+			return res.Proposals, nil
+		}
+		betaReq := &v1beta1.QueryProposalsRequest{ProposalStatus: betaStatus, Pagination: page}
+		betaRes := &v1beta1.QueryProposalsResponse{}
+		if betaErr := collector.grpcConn.Invoke(ctx, "/atomone.gov.v1beta1.Query/Proposals", betaReq, betaRes); betaErr != nil {
+			return nil, err
+		}
+		return convertBeta1ProposalsToV1(betaRes.Proposals), nil
+	}
+
+	if !useBeta1 {
+		govClient := v1.NewQueryClient(collector.grpcConn)
+		res, err := govClient.Proposals(ctx, &v1.QueryProposalsRequest{
+			ProposalStatus: v1Status,
+			Pagination:     page,
+		})
+		if err == nil {
+			return res.Proposals, nil
+		}
+		// Fall through to v1beta1 for chains that advertise mixed support.
+		useBeta1 = true
+	}
+
+	govBetaClient := v1beta1.NewQueryClient(collector.grpcConn)
+	betaRes, betaErr := govBetaClient.Proposals(ctx, &v1beta1.QueryProposalsRequest{
+		ProposalStatus: betaStatus,
+		Pagination:     page,
+	})
+	if betaErr != nil {
+		return nil, betaErr
+	}
+	return convertBeta1ProposalsToV1(betaRes.Proposals), nil
 }
 
 func proposalResultLabels(proposal *v1.Proposal) (proposalType, upgradeName, upgradeHeight string) {
@@ -637,7 +706,8 @@ func decodeUpgradePlan(raw []byte) (name, height string) {
 			}
 			name = string(value)
 			raw = raw[m:]
-		case number == 2 && kind == protowire.VarintType:
+		// cosmos-sdk Plan: name=1, time=2 (deprecated), height=3, info=4
+		case number == 3 && kind == protowire.VarintType:
 			value, m := protowire.ConsumeVarint(raw)
 			if m < 0 {
 				return name, height

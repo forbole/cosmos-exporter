@@ -24,7 +24,7 @@ var (
 	ProposalResultGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "tendermint_governance_proposal_result",
-			Help: "Recently finalized governance proposal result (retained for 72 hours after voting ends)",
+			Help: "Recently finalized governance proposal result (retained for 7 days after voting ends)",
 		},
 		[]string{"chain_id", "proposal_id", "result", "proposal_type", "upgrade_name", "upgrade_height"},
 	)

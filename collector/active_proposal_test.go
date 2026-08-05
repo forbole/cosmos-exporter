@@ -11,7 +11,8 @@ import (
 func TestProposalResultLabelsSoftwareUpgrade(t *testing.T) {
 	plan := protowire.AppendTag(nil, 1, protowire.BytesType)
 	plan = protowire.AppendString(plan, "v27.6.0")
-	plan = protowire.AppendTag(plan, 2, protowire.VarintType)
+	// Plan.height is protobuf field 3 (field 2 is deprecated time)
+	plan = protowire.AppendTag(plan, 3, protowire.VarintType)
 	plan = protowire.AppendVarint(plan, 32361600)
 
 	message := protowire.AppendTag(nil, 2, protowire.BytesType)
